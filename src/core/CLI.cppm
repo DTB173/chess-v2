@@ -39,31 +39,33 @@ export namespace CLI {
 		Square to = square_from_notation(notation + 2);
 
 		const Piece p = pos.get_mailbox()[from];
-		PieceType type = p.type();
-		Color us = p.color();
+		if (p.is_none()) return Move(); // Sanity check
 
+		PieceType type = p.type();
 		int flags = MoveFlags::Quiet;
 
+		// 1. Pawn Special Moves
 		if (type == PieceType::PAWN) {
-			int rank_from = from.rank();
-			int rank_to = to.rank();
+			int dist = std::abs(from.rank() - to.rank());
 
-			if (std::abs(rank_from - rank_to) == 2) {
+			if (dist == 2) {
 				flags = MoveFlags::DoublePush;
 			}
+			// If moving diagonally to an empty square, it's En Passant
 			else if (from.file() != to.file() && pos.get_mailbox()[to].is_none()) {
-				int ep_file = pos.get_metadata().en_passant_file();
-				if (ep_file >= 0 && ep_file == to.file()) {
-					flags = MoveFlags::EnPassant;
-				}
+				flags = MoveFlags::EnPassant;
 			}
 		}
-		if (type == PieceType::KING) {
-			if (std::abs((from % 8) - (to % 8)) > 1) {
-				flags = MoveFlags::Castling;
-			}
+
+		// 2. Castling
+		// If the king moves more than 1 file, it's a castle
+		if (type == PieceType::KING && std::abs(from.file() - to.file()) > 1) {
+			flags = MoveFlags::Castling;
 		}
-		if (notation[4] != '\0' && notation[4] != ' ') {
+
+		// 3. Promotions
+		// notation[4] is the 5th character (e.g., 'q' in "e7e8q")
+		if (notation[4] != '\0' && notation[4] != ' ' && notation[4] != '\n' && notation[4] != '\r') {
 			switch (notation[4]) {
 			case 'q': flags = MoveFlags::PromoQueen;  break;
 			case 'n': flags = MoveFlags::PromoKnight; break;
