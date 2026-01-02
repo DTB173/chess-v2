@@ -19,11 +19,30 @@ export namespace Position {
 
     constexpr char piece_to_char(Piece p) {
         constexpr int offset = 'a' - 'A';
-        constexpr char table[] = { '.','p','r','b','k','q','k' };
+        constexpr char table[] = { '.','p','r','n','b','q','k' };
 
         static_assert(static_cast<int>(PieceType::NONE) == 0);
         return table[static_cast<int>(p.type())] - p.is_white() * offset;
     }
+
+	// get king to sq, return rook from/to squares
+    struct RookMove {
+        Square from;
+        Square to;
+    };
+
+    constexpr RookMove NO_ROOK_MOVE{ Square::SQ_NONE, Square::SQ_NONE };
+
+    constexpr std::array<RookMove, 64> CASTLE_ROOK = []() constexpr{
+        std::array<RookMove, 64> t{};
+
+        t[Square::SQ_G1] = { Square::SQ_H1, Square::SQ_F1 };
+        t[Square::SQ_C1] = { Square::SQ_A1, Square::SQ_D1 };
+        t[Square::SQ_G8] = { Square::SQ_H8, Square::SQ_F8 };
+        t[Square::SQ_C8] = { Square::SQ_A8, Square::SQ_D8 };
+
+        return t;
+    }();
 
     class Flags {
     private:
@@ -49,17 +68,11 @@ export namespace Position {
         bool can_black_kingside()  const { return bits & mask(MASKS::BlackKingside); }
         bool can_black_queenside() const { return bits & mask(MASKS::BlackQueenside); }
 
-        // Castling removal (called when king/rook moves)
-        void remove_white_kingside()  { bits &= ~mask(MASKS::WhiteKingside); }
-        void remove_white_queenside() { bits &= ~mask(MASKS::WhiteQueenside); }
-        void remove_black_kingside()  { bits &= ~mask(MASKS::BlackKingside); }
-        void remove_black_queenside() { bits &= ~mask(MASKS::BlackQueenside); }
-
         // En passant
         int en_passant_file() const {
             return (bits & mask(MASKS::EPValid))
-                ? ((bits & mask(MASKS::EPFile)) >> 4)
-                : -1;
+                   ? ((bits & mask(MASKS::EPFile)) >> 4)
+                     : -1;
         }
 
         Square en_passant_square() const {
@@ -79,6 +92,21 @@ export namespace Position {
 
         void clear_en_passant() {
             bits &= ~(mask(MASKS::EPFile) | mask(MASKS::EPValid));
+        }
+
+        void update_castling_rights(int from, int to) {
+            constexpr ui16 CastlingRightsMask[64] = {
+                13, 15, 15, 15, 12, 15, 15, 14, // Rank 1: A1=1101, E1=1100, H1=1110
+                15, 15, 15, 15, 15, 15, 15, 15,
+                15, 15, 15, 15, 15, 15, 15, 15,
+                15, 15, 15, 15, 15, 15, 15, 15,
+                15, 15, 15, 15, 15, 15, 15, 15,
+                15, 15, 15, 15, 15, 15, 15, 15,
+                15, 15, 15, 15, 15, 15, 15, 15,
+                 7, 15, 15, 15,  3, 15, 15, 11  // Rank 8: A8=0111, E8=0011, H8=1011
+            };
+			ui64 final_mask = CastlingRightsMask[from] & CastlingRightsMask[to];
+			bits &= (final_mask | 0xFFF0);
         }
 
         // Side to move
@@ -108,7 +136,10 @@ export namespace Position {
     public:
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
-        inline ui64 get_king_bitboard(Color c) const { return board[bb_index(Piece(c, PieceType::KING))];}
+        inline Square get_king_square(Color c) const { 
+            ui64 bb = board[bb_index(Piece(c, PieceType::KING))];
+			return Bitwise::lsb(bb);;
+        }
         void init_start_pos() {
             using Types::Square;
             using Types::Piece;
@@ -173,19 +204,24 @@ export namespace Position {
             move_piece(moving_piece, from, to);
 
             // 4. Special Cases
+			// Pawn Double Push, En Passant, Promotion
             metadata.clear_en_passant();
+            metadata.update_castling_rights(from, to);
             if (m.is_promotion()) {
                 remove_piece(moving_piece, to);
                 place_piece(Piece(us, m.promotion_type()), to);
             }
-            if (flags == MoveFlags::DoublePush) {
+            else if (flags == MoveFlags::DoublePush) {
                 metadata.set_en_passant_file(Square(from).file());
             }
             else if (flags == MoveFlags::EnPassant) {
                 int victim_sq = (us == Color::WHITE) ? to - 8 : to + 8;
                 remove_piece(mailbox[victim_sq], victim_sq);
             }
-
+            else if (flags == MoveFlags::Castling) {
+				auto [r_from, r_to] = CASTLE_ROOK[to];
+				move_piece(mailbox[r_from], r_from, r_to); // Rook goes from corner to landing
+            }
             metadata.toggle_turn();
         }
 
@@ -195,13 +231,14 @@ export namespace Position {
             const int to = prev.prev_half_move.to();
             const int flags = prev.prev_half_move.flags();
             const Color us = prev.prev_flags.side_to_move();
+            const Color enemy = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
 
             Piece moving_piece = mailbox[to];
 
-            // 1. Handle the piece that moved
+            // 1. Restore the piece that moved
             if (prev.prev_half_move.is_promotion()) {
-                remove_piece(moving_piece, to);
-                place_piece(Piece(us, PieceType::PAWN), from);
+                remove_piece(moving_piece, static_cast<Square>(to));
+                place_piece(Piece(us, PieceType::PAWN), static_cast<Square>(from));
             }
             else {
                 move_piece(moving_piece, to, from);
@@ -210,25 +247,20 @@ export namespace Position {
             // 2. Restore captured pieces
             if (flags == MoveFlags::EnPassant) {
                 int victim_sq = (us == Color::WHITE) ? to - 8 : to + 8;
-                Piece victim_pawn = Piece(us, PieceType::PAWN);
-                place_piece(victim_pawn, victim_sq);
+                place_piece(Piece(enemy, PieceType::PAWN), static_cast<Square>(victim_sq));
             }
             else if (!prev.captured_piece.is_none()) {
-                place_piece(prev.captured_piece, to);
+                place_piece(prev.captured_piece, static_cast<Square>(to));
             }
 
-            // 3. Handle Castling (Teleport the Rook back)
+            // 3. Handle Castling
             if (flags == MoveFlags::Castling) {
-                int r_from, r_to;
-                if (to == Square::SQ_G1) { r_from = Square::SQ_H1; r_to = Square::SQ_F1; }
-                else if (to == Square::SQ_C1) { r_from = Square::SQ_A1; r_to = Square::SQ_D1; }
-                else if (to == Square::SQ_G8) { r_from = Square::SQ_H8; r_to = Square::SQ_F8; }
-                else { r_from = Square::SQ_A8; r_to = Square::SQ_D8; }
-                move_piece(mailbox[r_to], r_to, r_from); // Rook goes from landing to corner
+                auto [r_orig_corner, r_landed] = CASTLE_ROOK[to];
+                move_piece(mailbox[r_landed], r_landed, r_orig_corner);
             }
 
+            // 4. Restore Metadata
             metadata = prev.prev_flags;
-            update_occupancy();
         }
 
         void place_piece(Piece piece, Square sq) {
@@ -268,14 +300,28 @@ export namespace Position {
             total_pieces = occupancy[white_idx] | occupancy[black_idx];
         }
 
-        bool is_in_check(Color us) const {
-            ui64 kb = get_king_bitboard(us);
-            if (!kb) return false;
+        bool is_in_check(Color us, Square king_sq) const {
+            return is_square_attacked(king_sq, us);
+        }
+        bool is_square_attacked(Square sq, Color us) const {
+            const Color them = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
+            const int them_off = (static_cast<int>(them) - 1) * 6;
 
-            Square king_sq = static_cast<Square>(Bitwise::lsb(kb));
-            ui64 enemy_occ = occupancy[!(static_cast<int>(us) - 1)];
+            // 1. Leapers & Pawns
+            if (AttackTables::get_pawn_attack(sq, us) & board[them_off + 0]) return true; // PieceType::PAWN - 1 = 0
+            if (AttackTables::get_knight_attacks(sq) & board[them_off + 2]) return true; // PieceType::KNIGHT - 1 = 2
+            if (AttackTables::get_king_attacks(sq) & board[them_off + 5]) return true; // PieceType::KING - 1 = 5
 
-            return get_attacks_to(king_sq, us) & enemy_occ;
+            // 2. Sliders
+            // Check Bishops and Queens together
+            ui64 bishop_queen = board[them_off + 3] | board[them_off + 4];
+            if (AttackTables::get_bishop_attacks(sq, total_pieces) & bishop_queen) return true;
+
+            // Check Rooks and Queens together
+            ui64 rook_queen = board[them_off + 1] | board[them_off + 4];
+            if (AttackTables::get_rook_attacks(sq, total_pieces) & rook_queen) return true;
+
+            return false;
         }
 
         ui64 get_attacks_to(Square sq, Color us) const {
@@ -328,7 +374,8 @@ export namespace Position {
                                                 sq, us, total_pieces, enemy_stuff, metadata.en_passant_file()
                                             ); break;
             case PieceType::KNIGHT: moves = AttackTables::get_knight_attacks(sq); break;
-            case PieceType::KING:   moves = AttackTables::get_king_attacks(sq);   break;
+            case PieceType::KING:   moves = AttackTables::get_king_attacks(sq);
+                                    moves |= get_castling_targets(us); break;
             case PieceType::ROOK:   moves = AttackTables::get_rook_attacks(sq, total_pieces); break;
             case PieceType::BISHOP: moves = AttackTables::get_bishop_attacks(sq, total_pieces); break;
             case PieceType::QUEEN:  moves = AttackTables::get_queen_attacks(sq, total_pieces); break;
@@ -341,6 +388,44 @@ export namespace Position {
             }
 
             return moves;
+        }
+
+        ui64 get_castling_targets(Color us) {
+			constexpr ui64 WHITE_KINGSIDE_MASK  = (1ULL << Square::SQ_F1) | (1ULL << Square::SQ_G1);
+			constexpr ui64 WHITE_QUEENSIDE_MASK = (1ULL << Square::SQ_D1) | (1ULL << Square::SQ_C1) | (1ULL << Square::SQ_B1);
+			constexpr ui64 BLACK_KINGSIDE_MASK  = (1ULL << Square::SQ_F8) | (1ULL << Square::SQ_G8);
+			constexpr ui64 BLACK_QUEENSIDE_MASK = (1ULL << Square::SQ_D8) | (1ULL << Square::SQ_C8) | (1ULL << Square::SQ_B8);
+
+            // 1. If currently in check, castling is illegal
+            if (is_in_check(us, get_king_square(us))) return 0ULL;
+
+            ui64 targets = 0ULL;
+            const int enemy_idx = (us == Color::WHITE) ? 1 : 0;
+            const ui64 enemy_occ = occupancy[enemy_idx];
+
+            if (us == Color::WHITE) {
+                // Kingside: E1 to G1 (Must check F1)
+                if (metadata.can_white_kingside() && !(total_pieces & WHITE_KINGSIDE_MASK)) {
+                    // Check if F1 is attacked (G1 check is handled by is_move_legal's final check)
+                    if (!is_square_attacked(Square::SQ_F1, us)) targets |= (1ULL << Square::SQ_G1);
+                }
+                // Queenside: E1 to C1 (Must check D1)
+                if (metadata.can_white_queenside() && !(total_pieces & WHITE_QUEENSIDE_MASK)) {
+                    // Check if D1 is attacked
+                    if (!is_square_attacked(Square::SQ_D1, us)) targets |= (1ULL << Square::SQ_C1);
+                }
+            }
+            else {
+                // Black Kingside: E8 to G8 (Must check F8)
+                if (metadata.can_black_kingside() && !(total_pieces & BLACK_KINGSIDE_MASK)) {
+                    if (!is_square_attacked(Square::SQ_F8, us)) targets |= (1ULL << Square::SQ_G8);
+                }
+                // Black Queenside: E8 to C8 (Must check D8)
+                if (metadata.can_black_queenside() && !(total_pieces & BLACK_QUEENSIDE_MASK)) {
+                    if (!is_square_attacked(Square::SQ_D8, us)) targets |= (1ULL << Square::SQ_C8);
+                }
+            }
+            return targets;
         }
 
         void highlight_attacks(std::ostream& out, Square sq) {
@@ -395,7 +480,7 @@ export namespace Position {
         if (!(targets & (1ULL << to))) return false;
 
         pos.make_move(m);
-        bool in_check = pos.is_in_check(us);
+        bool in_check = pos.is_in_check(us, pos.get_king_square(us));
         pos.undo_move();
 
         return !in_check;
