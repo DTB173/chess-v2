@@ -107,8 +107,9 @@ export namespace Types {
             SQ_NONE
         };
 
-        SquareName val;
+        SquareName val{};
 
+		constexpr Square() : val(SQ_NONE) {}
         constexpr Square(SquareName s) : val(s) {}
         constexpr Square(int s) : val(static_cast<SquareName>(s)) {}
 
