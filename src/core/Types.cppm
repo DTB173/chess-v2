@@ -11,15 +11,27 @@ export namespace Types {
     using ui8  = std::uint8_t;
     
     namespace MoveFlags {
-        constexpr int Quiet       = 0b0000 << 12;
-        constexpr int DoublePush  = 0b0001 << 12;
-        constexpr int EnPassant   = 0b0010 << 12;
-        constexpr int Castling    = 0b0011 << 12;
-        
+        // Basic types
+        constexpr int Quiet      = 0b0000 << 12;
+        constexpr int DoublePush = 0b0001 << 12;
+        constexpr int EnPassant  = 0b0101 << 12; // Bit 14 set because it's a capture
+        constexpr int Castling   = 0b0010 << 12;
+
+        // Masks
+        constexpr int Capture = 0b0100 << 12;
+        constexpr int Promo   = 0b1000 << 12;
+
+        // Specific Promotions
         constexpr int PromoKnight = 0b1000 << 12;
         constexpr int PromoBishop = 0b1001 << 12;
         constexpr int PromoRook   = 0b1010 << 12;
         constexpr int PromoQueen  = 0b1011 << 12;
+
+        // Promotion + Capture (Promo bit + Capture bit + Piece bits)
+        constexpr int PC_Knight = 0b1100 << 12;
+        constexpr int PC_Bishop = 0b1101 << 12;
+        constexpr int PC_Rook   = 0b1110 << 12;
+        constexpr int PC_Queen  = 0b1111 << 12;
     }
 
     enum class Color : ui8 {
@@ -59,13 +71,12 @@ export namespace Types {
         ui16 data;
 
         // Bit layout: 
-        // 0-5: From square
-        // 6-11: To square
+        //  0-5 : From square
+        //  6-11: To square
         // 12-15: Flags
         static constexpr ui16 FROM_MASK = 0x3F;
-        static constexpr ui16 TO_MASK = 0xFC0; // (0x3F << 6)
+        static constexpr ui16 TO_MASK   = 0xFC0; // (0x3F << 6)
         static constexpr ui16 FLAG_MASK = 0xF000;
-        static constexpr ui16 PROMO_BIT = 0x8000; // High bit of flags
 
         constexpr Move() : data(0) {}
 
@@ -78,7 +89,10 @@ export namespace Types {
         constexpr int to()    const { return (data & TO_MASK) >> 6; }
         constexpr int flags() const { return data & FLAG_MASK; }
 
-        constexpr bool is_promotion()  const { return data & PROMO_BIT; }
+        constexpr bool is_tactical()   const { return flags() & (MoveFlags::Promo | MoveFlags::Capture); }
+        constexpr bool is_capture()    const { return flags() & MoveFlags::Capture; }
+        constexpr bool is_promo()      const { return flags() & MoveFlags::Promo; }
+
         constexpr bool is_en_passant() const { return flags() == MoveFlags::EnPassant; }
         constexpr bool is_castling()   const { return flags() == MoveFlags::Castling; }
 
