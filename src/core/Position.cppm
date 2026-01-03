@@ -3,11 +3,13 @@ module;
 #include <vector>
 #include <ostream>
 #include <cassert>
+
 export module Position;
 
 import Types;
 import Bitboards;
 import AttackTables;
+import Zobrist;
 
 export namespace Position {
     using namespace Types;
@@ -47,6 +49,7 @@ export namespace Position {
     class Flags {
     private:
         ui16 bits{ 0xF };
+		ui8 halfmove_clock{ 0 };
 
         enum class MASKS : ui16 {
             WhiteKingside  = 1 << 0,
@@ -109,6 +112,19 @@ export namespace Position {
 			bits &= (final_mask | 0xFFF0);
         }
 
+        ui16 castling_index()const {
+			return bits & 0x0F;
+        }
+        ui16 ep_index() const {
+			assert(bits & mask(MASKS::EPValid));
+            return (bits & mask(MASKS::EPFile)) >> 4;
+        }
+
+		void reset_clock() { halfmove_clock = 0; }
+		void increment_clock() { ++halfmove_clock; }
+        ui8  get_clock() const { return halfmove_clock; }
+        bool is_50_move_draw() const { return halfmove_clock >= 100; }
+
         // Side to move
         Color side_to_move() const { return bits & mask(MASKS::BlackToMove) ? Color::BLACK : Color::WHITE; }
         void toggle_turn() { bits ^= mask(MASKS::BlackToMove); }
@@ -136,10 +152,31 @@ export namespace Position {
     public:
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
+
         inline Square get_king_square(Color c) const { 
             ui64 bb = board[bb_index(Piece(c, PieceType::KING))];
-			return Bitwise::lsb(bb);;
+			return Bitwise::lsb(bb);
         }
+
+        bool is_draw() const {
+            // 1. 50-move rule (100 half-moves)
+            if (metadata.get_clock() >= 100) return true;
+
+            // 2. Repetition (Check back through history)
+            // We only need to check back as far as the half_move_clock allows
+            int count = 0;
+            int stop = (history_idx > metadata.get_clock()) ? (int)history_idx - metadata.get_clock() : 0;
+
+            // We only check every 2nd move (our previous turns)
+            for (int i = history_idx - 2; i >= stop; i -= 2) {
+                if (history[i].prev_zobrist == zobrist_key) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         void init_start_pos() {
             using Types::Square;
             using Types::Piece;
@@ -193,6 +230,9 @@ export namespace Position {
 
             total_pieces = occupancy[white_idx] | occupancy[black_idx];
 
+			// Init zobrist key
+            zobrist_key = compute_hash_from_scratch();
+
         }
 
         void make_move(Move m) {
@@ -203,21 +243,33 @@ export namespace Position {
             Piece moving_piece = mailbox[from];
             Piece captured = mailbox[to];
 
-            // 1. History (Must store captured piece for undo)
+            // 1. History(Must store captured piece for undo)
             history[history_idx++] = { zobrist_key, m, captured, metadata };
+            // 2. XOR OUT old metadata before we change it
+            zobrist_key ^= Zobrist::castling[metadata.castling_index()];
+            if (metadata.en_passant_file() != -1)
+                zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
 
-            // 2. Handle Capture
+            // 3. Handle Capture
             if (!captured.is_none() && flags != MoveFlags::EnPassant) {
                 remove_piece(captured, to);
             }
-            // 3. Basic Movement
+
+			// 3b. Update 50-move rule clock
+            if (!captured.is_none() || moving_piece.type() == PieceType::PAWN) {
+                metadata.reset_clock();
+            }
+            else {
+                metadata.increment_clock();
+            }
+            // 4. Basic Movement
             move_piece(moving_piece, from, to);
 
-            // 4. Special Cases
+            // 5. Special Cases
 			// Pawn Double Push, En Passant, Promotion
             metadata.clear_en_passant();
             metadata.update_castling_rights(from, to);
-            if (m.is_promotion()) {
+            if (m.is_promo()) {
                 remove_piece(moving_piece, to);
                 place_piece(Piece(us, m.promotion_type()), to);
             }
@@ -232,7 +284,15 @@ export namespace Position {
 				auto [r_from, r_to] = CASTLE_ROOK[to];
 				move_piece(mailbox[r_from], r_from, r_to); // Rook goes from corner to landing
             }
+
+            zobrist_key ^= Zobrist::castling[metadata.castling_index()];
+            if (metadata.en_passant_file() != -1)
+                zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
+
             metadata.toggle_turn();
+            zobrist_key ^= Zobrist::side;
+
+            assert(zobrist_key == compute_hash_from_scratch());
         }
 
         void undo_move() {
@@ -246,7 +306,7 @@ export namespace Position {
             Piece moving_piece = mailbox[to];
 
             // 1. Restore the piece that moved
-            if (prev.prev_half_move.is_promotion()) {
+            if (prev.prev_half_move.is_promo()) {
                 remove_piece(moving_piece, static_cast<Square>(to));
                 place_piece(Piece(us, PieceType::PAWN), static_cast<Square>(from));
             }
@@ -271,6 +331,7 @@ export namespace Position {
 
             // 4. Restore Metadata
             metadata = prev.prev_flags;
+			zobrist_key = prev.prev_zobrist;
         }
 
         void inline place_piece(Piece piece, Square sq) {
@@ -280,6 +341,9 @@ export namespace Position {
             occupancy[static_cast<int>(piece.color()) - 1] |= bit;
             total_pieces |= bit;
             mailbox[sq] = piece;
+
+            // XOR IN
+            zobrist_key ^= Zobrist::pieces[idx][sq];
         }
 
         void inline remove_piece(Piece piece, Square sq) {
@@ -289,6 +353,9 @@ export namespace Position {
             occupancy[static_cast<int>(piece.color()) - 1] &= ~bit;
             total_pieces &= ~bit;
             mailbox[sq] = Piece();
+
+            // XOR OUT
+            zobrist_key ^= Zobrist::pieces[idx][sq];
         }
 
         void move_piece(Piece piece, int from, int to) {
@@ -301,7 +368,7 @@ export namespace Position {
         }
         bool is_square_attacked(Square sq, Color us) const {
             const Color them = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
-            static int them_off = (static_cast<int>(them) - 1) * 6;
+            int them_off = (us == Color::WHITE) ? 6 : 0;
 
             // 1. Leapers & Pawns
             if (AttackTables::get_pawn_attack(sq, us) & board[them_off + 0]) return true; // PieceType::PAWN - 1 = 0
@@ -427,6 +494,30 @@ export namespace Position {
         void highlight_attacks(std::ostream& out, Square sq) {
             ui64 attacks = get_highlight_bitboard(sq);
             print_attacks(out, attacks);
+        }
+
+        ui64 compute_hash_from_scratch() const {
+            ui64 h = 0ULL;
+
+            for (int p_idx = 0; p_idx < 12; ++p_idx) {
+                ui64 bb = board[p_idx];
+                while (bb) {
+                    int sq = Bitwise::lsb(bb);
+                    h ^= Zobrist::pieces[p_idx][sq];
+                    bb &= (bb - 1);
+                }
+            }
+            h ^= Zobrist::castling[metadata.castling_index()];
+
+            if (metadata.en_passant_file() != -1) {
+                h ^= Zobrist::en_passant[metadata.ep_index()];
+               
+            }
+
+            if (metadata.side_to_move() == Color::BLACK) {
+                h ^= Zobrist::side;
+            }
+            return h;
         }
 
         void print_attacks(std::ostream& out, ui64 attacks) const {

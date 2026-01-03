@@ -9,6 +9,7 @@ target_sources(core
         AttackTables.cppm 
         Magics.cppm 
         CLI.cppm 
+        Zobrist.cppm
 )
 target_compile_features(core PUBLIC cxx_std_20)
 

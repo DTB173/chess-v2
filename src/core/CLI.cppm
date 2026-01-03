@@ -7,6 +7,7 @@ module;
 export module CLI;
 import Position;
 import Types;
+import Zobrist;
 
 export namespace CLI {
 	enum class OpType{
@@ -78,6 +79,7 @@ export namespace CLI {
 	}
 
 	void game_loop() {
+		Zobrist::init();
 		Position::Position pos;
 		pos.init_start_pos();
 		pos.print(std::cout);
