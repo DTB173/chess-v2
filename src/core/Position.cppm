@@ -181,7 +181,17 @@ export namespace Position {
                 place(static_cast<Square>(f + 48), Piece(Color::BLACK, PieceType::PAWN)); // Rank 7
 
             // Update occupancy
-            update_occupancy();
+            int white_idx = static_cast<int>(Color::WHITE) - 1;
+            int black_idx = static_cast<int>(Color::BLACK) - 1;
+            occupancy[white_idx] = 0;
+            occupancy[black_idx] = 0;
+
+            for (int i = 0; i < 6; ++i) {
+                occupancy[white_idx] |= board[i];
+                occupancy[black_idx] |= board[i + 6];
+            }
+
+            total_pieces = occupancy[white_idx] | occupancy[black_idx];
 
         }
 
@@ -263,7 +273,7 @@ export namespace Position {
             metadata = prev.prev_flags;
         }
 
-        void place_piece(Piece piece, Square sq) {
+        void inline place_piece(Piece piece, Square sq) {
             int idx = bb_index(piece);
             ui64 bit = 1ULL << sq;
             board[idx] |= bit;
@@ -272,7 +282,7 @@ export namespace Position {
             mailbox[sq] = piece;
         }
 
-        void remove_piece(Piece piece, Square sq) {
+        void inline remove_piece(Piece piece, Square sq) {
             int idx = bb_index(piece);
             ui64 bit = 1ULL << sq;
             board[idx] &= ~bit;
@@ -286,26 +296,12 @@ export namespace Position {
             place_piece(piece, to);
         }
 
-        void update_occupancy() {
-            int white_idx = static_cast<int>(Color::WHITE) - 1;
-            int black_idx = static_cast<int>(Color::BLACK) - 1;
-            occupancy[white_idx] = 0;
-            occupancy[black_idx] = 0;
-
-            for (int i = 0; i < 6; ++i) {
-                occupancy[white_idx] |= board[i];
-                occupancy[black_idx] |= board[i + 6];
-            }
-
-            total_pieces = occupancy[white_idx] | occupancy[black_idx];
-        }
-
         bool is_in_check(Color us, Square king_sq) const {
             return is_square_attacked(king_sq, us);
         }
         bool is_square_attacked(Square sq, Color us) const {
             const Color them = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
-            const int them_off = (static_cast<int>(them) - 1) * 6;
+            static int them_off = (static_cast<int>(them) - 1) * 6;
 
             // 1. Leapers & Pawns
             if (AttackTables::get_pawn_attack(sq, us) & board[them_off + 0]) return true; // PieceType::PAWN - 1 = 0

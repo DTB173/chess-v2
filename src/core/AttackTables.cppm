@@ -47,19 +47,17 @@ export namespace AttackTables {
 		return moves;
 	}
 
-	consteval ui64 white_pawn_attacks(ui64 idx) {
+	template<Color c>
+	consteval ui64 pawn_attacks(ui64 idx) {
 		ui64 moves{};
-
-		moves |= (idx << 7) & NOT_H_FILE; // Up Right
-		moves |= (idx << 9) & NOT_A_FILE; // Up Left
-		return moves;
-	}
-
-	consteval ui64 black_pawn_attacks(ui64 idx) {
-		ui64 moves{};
-
-		moves |= (idx >> 7) & NOT_A_FILE; // Down Left
-		moves |= (idx >> 9) & NOT_H_FILE; // Down Right
+		if constexpr (c == Color::WHITE) {
+			moves |= (idx << 7) & NOT_H_FILE; // Up Right
+			moves |= (idx << 9) & NOT_A_FILE; // Up Left
+		}
+		else {
+			moves |= (idx >> 7) & NOT_A_FILE; // Down Left
+			moves |= (idx >> 9) & NOT_H_FILE; // Down Right
+		}
 		return moves;
 	}
 
@@ -86,7 +84,7 @@ export namespace AttackTables {
 	consteval auto make_wpawn_array() {
 		std::array<ui64, 64> table;
 		for (int shift{}; shift < 64; ++shift) {
-			table[shift] = white_pawn_attacks(1ULL << shift);
+			table[shift] = pawn_attacks<Color::WHITE>(1ULL << shift);
 		}
 		return table;
 	}
@@ -94,7 +92,7 @@ export namespace AttackTables {
 	consteval auto make_bpawn_array() {
 		std::array<ui64, 64> table;
 		for (int shift{}; shift < 64; ++shift) {
-			table[shift] = black_pawn_attacks(1ULL << shift);
+			table[shift] = pawn_attacks<Color::BLACK>(1ULL << shift);
 		}
 		return table;
 	}
@@ -202,7 +200,7 @@ export namespace AttackTables {
 			}
 		}
 
-		std::cout << "All rook attacks verified?\n";
+		std::cout << "All rook attacks verified.\n";
 		std::cout << "rook: " << Magics::rook_table_size << '\n'
 			<< "bishop: " << Magics::bishop_table_size << '\n';
 	}
