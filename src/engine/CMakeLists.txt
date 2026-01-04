@@ -4,6 +4,6 @@ target_sources(engine
     PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
         ChessEngine.cppm
-)
+ "MoveGen.cppm" "Perft.cppm")
 
 target_link_libraries(engine PUBLIC core)
