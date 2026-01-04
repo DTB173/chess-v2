@@ -50,7 +50,7 @@ export namespace Types {
         KING,
     };
 
-    Color opponent_of(Color c) {
+    inline Color opponent_of(Color c) {
         return (c == Color::WHITE) ? Color::BLACK : Color::WHITE;
 	}
 
