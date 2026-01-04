@@ -158,13 +158,20 @@ export namespace Position {
 			return Bitwise::lsb(bb);
         }
 
+        inline ui64 get_bitboard(PieceType type, Color c) const {
+			return board[bb_index(Piece(c, type))];
+        }
+
+		inline ui64 get_occupancy(Color c) const {
+            return occupancy[static_cast<int>(c) - 1];
+		}
+
         bool is_draw() const {
             // 1. 50-move rule (100 half-moves)
             if (metadata.get_clock() >= 100) return true;
 
             // 2. Repetition (Check back through history)
             // We only need to check back as far as the half_move_clock allows
-            int count = 0;
             int stop = (history_idx > metadata.get_clock()) ? (int)history_idx - metadata.get_clock() : 0;
 
             // We only check every 2nd move (our previous turns)
@@ -232,7 +239,6 @@ export namespace Position {
 
 			// Init zobrist key
             zobrist_key = compute_hash_from_scratch();
-
         }
 
         void make_move(Move m) {
@@ -245,6 +251,7 @@ export namespace Position {
 
             // 1. History(Must store captured piece for undo)
             history[history_idx++] = { zobrist_key, m, captured, metadata };
+
             // 2. XOR OUT old metadata before we change it
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
             if (metadata.en_passant_file() != -1)
@@ -288,7 +295,6 @@ export namespace Position {
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
             if (metadata.en_passant_file() != -1)
                 zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
-
             metadata.toggle_turn();
             zobrist_key ^= Zobrist::side;
 
@@ -341,7 +347,6 @@ export namespace Position {
             occupancy[static_cast<int>(piece.color()) - 1] |= bit;
             total_pieces |= bit;
             mailbox[sq] = piece;
-
             // XOR IN
             zobrist_key ^= Zobrist::pieces[idx][sq];
         }
@@ -353,7 +358,6 @@ export namespace Position {
             occupancy[static_cast<int>(piece.color()) - 1] &= ~bit;
             total_pieces &= ~bit;
             mailbox[sq] = Piece();
-
             // XOR OUT
             zobrist_key ^= Zobrist::pieces[idx][sq];
         }
@@ -367,11 +371,10 @@ export namespace Position {
             return is_square_attacked(king_sq, us);
         }
         bool is_square_attacked(Square sq, Color us) const {
-            const Color them = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
             int them_off = (us == Color::WHITE) ? 6 : 0;
 
             // 1. Leapers & Pawns
-            if (AttackTables::get_pawn_attack(sq, us) & board[them_off + 0]) return true; // PieceType::PAWN - 1 = 0
+            if (AttackTables::get_pawn_attacks(sq, us) & board[them_off + 0]) return true; // PieceType::PAWN - 1 = 0
             if (AttackTables::get_knight_attacks(sq) & board[them_off + 2]) return true; // PieceType::KNIGHT - 1 = 2
             if (AttackTables::get_king_attacks(sq) & board[them_off + 5]) return true; // PieceType::KING - 1 = 5
 
@@ -413,14 +416,14 @@ export namespace Position {
 
             // Pawns
             // Pawns attack *towards us*, so use `us` for attack direction
-            attackers |= AttackTables::get_pawn_attack(sq, us) &
+            attackers |= AttackTables::get_pawn_attacks(sq, us) &
                          board[bb_index(Piece(them, PieceType::PAWN))];
 
             return attackers;
         }
 
 
-        ui64 get_highlight_bitboard(Types::Square sq) {
+        ui64 get_highlight_bitboard(Types::Square sq) const {
             Piece piece = mailbox[sq];
             if (piece.is_none()) return 0ULL;
 
@@ -453,7 +456,7 @@ export namespace Position {
             return moves;
         }
 
-        ui64 get_castling_targets(Color us) {
+        ui64 get_castling_targets(Color us) const {
 			constexpr ui64 WHITE_KINGSIDE_MASK  = (1ULL << Square::SQ_F1) | (1ULL << Square::SQ_G1);
 			constexpr ui64 WHITE_QUEENSIDE_MASK = (1ULL << Square::SQ_D1) | (1ULL << Square::SQ_C1) | (1ULL << Square::SQ_B1);
 			constexpr ui64 BLACK_KINGSIDE_MASK  = (1ULL << Square::SQ_F8) | (1ULL << Square::SQ_G8);
@@ -464,7 +467,6 @@ export namespace Position {
 
             ui64 targets = 0ULL;
             const int enemy_idx = (us == Color::WHITE) ? 1 : 0;
-            const ui64 enemy_occ = occupancy[enemy_idx];
 
             if (us == Color::WHITE) {
                 // Kingside: E1 to G1 (Must check F1)
