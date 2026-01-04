@@ -104,7 +104,7 @@ export namespace AttackTables {
 
 	constexpr ui64 get_knight_attacks(ui64 idx) { return knight_table[idx]; }
 	constexpr ui64 get_king_attacks(ui64 idx) { return king_table[idx]; }
-	constexpr ui64 get_pawn_attack(ui64 idx, Color c) { return c == Color::WHITE ? white_pawn_table[idx] : black_pawn_table[idx]; }
+	constexpr ui64 get_pawn_attacks(ui64 idx, Color c) { return c == Color::WHITE ? white_pawn_table[idx] : black_pawn_table[idx]; }
 	ui64 get_pawn_moves_and_attacks(int sq, Color us, ui64 total_occ, ui64 enemy_occ, int ep_file) {
 		ui64 moves = 0;
 		ui64 bit = (1ULL << sq);
@@ -131,7 +131,7 @@ export namespace AttackTables {
 		}
 
 		// 3. Normal Captures:
-		moves |= (get_pawn_attack(sq, us) & enemy_occ);
+		moves |= (get_pawn_attacks(sq, us) & enemy_occ);
 
 		// 4. En Passant: The "Magic" bit
 		if (ep_file != -1) {
@@ -141,7 +141,7 @@ export namespace AttackTables {
 			int ep_sq = ep_rank * 8 + ep_file;
 
 			// Only add if the pawn at 'sq' is actually capable of hitting the ep_sq
-			moves |= (get_pawn_attack(sq, us) & (1ULL << ep_sq));
+			moves |= (get_pawn_attacks(sq, us) & (1ULL << ep_sq));
 		}
 
 		return moves;
