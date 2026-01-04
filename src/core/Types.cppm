@@ -50,6 +50,10 @@ export namespace Types {
         KING,
     };
 
+    Color opponent_of(Color c) {
+        return (c == Color::WHITE) ? Color::BLACK : Color::WHITE;
+	}
+
     struct Piece {
         ui8 data;
 
