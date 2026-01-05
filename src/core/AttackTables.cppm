@@ -37,8 +37,8 @@ export namespace AttackTables {
 		ui64 moves{};
 
 		moves |= (idx << 8) | (idx >> 8); // Up, Down
-		moves |= (idx << 1) & NOT_H_FILE; // Right
-		moves |= (idx >> 1) & NOT_A_FILE; // Left
+		moves |= (idx & NOT_H_FILE) << 1; // Right
+		moves |= (idx & NOT_A_FILE) >> 1; // Left
 		moves |= (idx << 9) & NOT_A_FILE; // Up Left
 		moves |= (idx << 7) & NOT_H_FILE; // Up Right
 		moves |= (idx >> 9) & NOT_H_FILE; // Down Right
