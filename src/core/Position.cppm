@@ -3,7 +3,7 @@ module;
 #include <vector>
 #include <ostream>
 #include <cassert>
-
+#include <string>
 export module Position;
 
 import Types;
@@ -550,6 +550,18 @@ export namespace Position {
                 out << "  +---+---+---+---+---+---+---+---+\n";
             }
             out << "    a   b   c   d   e   f   g   h\n";
+			Square ep_sq = metadata.en_passant_square();
+            out << "EP: " << (ep_sq != Square::SQ_NONE ?
+                std::string{ Types::file_char(ep_sq) } + std::string{ Types::rank_char(ep_sq) }
+            : "None") << '\n';
+            out << "Castling rights: "
+                << (metadata.can_white_kingside() ? "K" : "")
+                << (metadata.can_white_queenside() ? "Q" : "")
+                << (metadata.can_black_kingside() ? "k" : "")
+                << (metadata.can_black_queenside() ? "q" : "")
+				<< "\n";
+            out << "Checks : \n\t" << (is_in_check(Color::WHITE, get_king_square(Color::WHITE)) ? "White Yes " : "White No") << "\n\t"
+				               << (is_in_check(Color::BLACK, get_king_square(Color::BLACK)) ? "Black Yes" : "Black No") << '\n';
             out << (metadata.side_to_move() == Color::BLACK ? "Black" : "White") << " to move\n";
         }
 	};
