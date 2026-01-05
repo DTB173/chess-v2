@@ -8,6 +8,8 @@ export module CLI;
 import Position;
 import Types;
 import Zobrist;
+import MoveGen;
+import Perft;
 
 export namespace CLI {
 	enum class OpType{
@@ -16,12 +18,16 @@ export namespace CLI {
 		QUIT,
 		UNDO,
 		MOVES,
+		LIST,
+		DIVIDE,
 		NONE
 	};
 	OpType parse_input(std::string_view in) {
 		if (in == "print") return OpType::PRINT;
 		else if (in == "quit") return OpType::QUIT;
 		else if (in == "undo") return OpType::UNDO;
+		else if (in == "movelist") return OpType::LIST;
+		else if (in.find("divide") != std::string::npos) return OpType::DIVIDE;
 		else if (in.find("play") != std::string::npos) return OpType::PLAY;
 		else if (in.find("moves") != std::string::npos) return OpType::MOVES;
 		return OpType::NONE;
@@ -126,6 +132,27 @@ export namespace CLI {
 					std::cerr << "Invalid move notation, command was: " << cmd << "arg was: " << arg << '\n';
 				}
 			}break;
+			case OpType::LIST: {
+				auto moves = MoveGen::generate_all_moves(pos);
+				std::cout << "Legal moves:\n";
+				for (const auto& m : moves) {
+					Types::Color us = pos.get_metadata().side_to_move();
+					pos.make_move(m);
+					if (!pos.is_square_attacked(pos.get_king_square(us), us)) {
+						std::cout << Types::move_to_string(m) << '\n';
+					}
+					pos.undo_move();
+				}
+			}break;
+			case OpType::DIVIDE: {
+				std::string arg;
+				if (auto space_pos = input.find(' '); space_pos != std::string::npos) {
+					arg = input.substr(space_pos + 1);
+					int depth = std::stoi(arg);
+					Perft::divide(pos, depth);
+
+				}
+			} break;
 			default:std::cout << "Unknown command.\n";
 			}
 		}
