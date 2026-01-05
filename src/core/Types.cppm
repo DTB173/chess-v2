@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <string>
 
 export module Types;
 
@@ -142,4 +143,25 @@ export namespace Types {
 
         constexpr operator int() const { return static_cast<int>(val); }
     };
+
+    constexpr char file_char(int sq) {
+        return 'a' + (sq & 7);       // file = sq % 8
+    }
+
+    constexpr char rank_char(int sq) {
+        return '1' + (sq >> 3);      // rank = sq / 8
+    }
+
+    std::string move_to_string(const Move& move) {
+        int from_sq = move.from();
+        int to_sq = move.to();
+
+        std::string s;
+        s += file_char(from_sq);
+        s += rank_char(from_sq);
+        s += file_char(to_sq);
+        s += rank_char(to_sq);
+
+        return s;
+    }
 }
