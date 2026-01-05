@@ -198,7 +198,7 @@ export namespace MoveGen {
 	void generate_queen_moves(const Position::Position& pos, MoveList& moves) {
 		Color us     = pos.get_metadata().side_to_move();
 		ui64  occ    = pos.get_occupancy(Color::WHITE) | pos.get_occupancy(Color::BLACK);
-		ui64  empty = ~occ;
+		ui64  empty  = ~occ;
 		ui64  enemy  = pos.get_occupancy(opponent_of(us));
 		ui64  queens = pos.get_bitboard(PieceType::QUEEN, us);
 

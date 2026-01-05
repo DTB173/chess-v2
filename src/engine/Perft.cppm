@@ -57,7 +57,24 @@ export namespace Perft
         Zobrist::init();
         Position::Position pos;
         pos.init_start_pos();
+        
         return perft(pos, depth, bulk);
+    }
+
+    void divide(Position::Position& pos, int depth) {
+        auto moves = MoveGen::generate_all_moves(pos);
+        ui64 total_nodes = 0;
+        for (const auto& m : moves) {
+            Color us = pos.get_metadata().side_to_move();
+            pos.make_move(m);
+            if (!pos.is_square_attacked(pos.get_king_square(us), us)) {
+                ui64 nodes = perft(pos, depth - 1);
+                std::cout << Types::move_to_string(m) << ": " << nodes << std::endl;
+                total_nodes += nodes;
+            }
+            pos.undo_move();
+        }
+        std::cout << "\nTotal: " << total_nodes << std::endl;
     }
 
     void measure_perft(int depth, bool bulk) {
