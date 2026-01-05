@@ -8,9 +8,9 @@ target_sources(core
         Position.cppm
         AttackTables.cppm 
         Magics.cppm 
-        CLI.cppm 
         Zobrist.cppm
 )
+
 target_compile_features(core PUBLIC cxx_std_20)
 
 set_target_properties(core PROPERTIES CXX_SCAN_FOR_MODULES ON)
