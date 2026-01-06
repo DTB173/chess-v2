@@ -55,6 +55,15 @@ export namespace Types {
         return (c == Color::WHITE) ? Color::BLACK : Color::WHITE;
 	}
 
+    struct Score {
+        int mg;
+        int eg;
+
+        void operator+=(const Score& other) { mg += other.mg; eg += other.eg; }
+        void operator-=(const Score& other) { mg -= other.mg; eg -= other.eg; }
+        Score operator*(int factor) { return { mg * factor, eg * factor }; }
+    };
+
     struct Piece {
         ui8 data;
 

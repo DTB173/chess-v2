@@ -4,12 +4,14 @@ module;
 #include <ostream>
 #include <cassert>
 #include <string>
+#include <algorithm>
 export module Position;
 
 import Types;
 import Bitboards;
 import AttackTables;
 import Zobrist;
+import PSQTables;
 
 export namespace Position {
     using namespace Types;
@@ -27,6 +29,14 @@ export namespace Position {
         return table[static_cast<int>(p.type())] - p.is_white() * offset;
     }
 
+    constexpr std::array<int, 6> PIECE_PHASE_WEIGHT = {
+		0,    // PAWN
+        2,    // ROOK
+        1,    // KNIGHT
+        1,    // BISHOP
+        4,    // QUEEN
+		0,    // KING
+	};
 	// get king to sq, return rook from/to squares
     struct RookMove {
         Square from;
@@ -147,9 +157,17 @@ export namespace Position {
         std::array<Piece, 64> mailbox{};
 
         ui64 zobrist_key{};
+		Score current_score{};
+		int current_phase{};
         Flags metadata{};
         size_t history_idx{};
     public:
+        Position() = default;
+
+		Position(const Position& other) = delete;
+		Position& operator=(const Position& other) = delete;
+
+		ui64 get_zobrist_key() const { return zobrist_key; }
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
 
@@ -165,6 +183,17 @@ export namespace Position {
 		inline ui64 get_occupancy(Color c) const {
             return occupancy[static_cast<int>(c) - 1];
 		}
+
+        int evaluate() const {
+            // 1. Clamp phase to [0, 24] for safety
+            int phase = std::clamp(current_phase, 0, 24);
+
+            // 2. Linear interpolation (Tapering)
+            int score = (current_score.mg * phase + current_score.eg * (24 - phase)) / 24;
+
+            // 3. Return relative to side to move (standard for alpha-beta)
+            return (metadata.side_to_move() == Color::WHITE) ? score : -score;
+        }
 
         bool is_draw() const {
             // 1. 50-move rule (100 half-moves)
@@ -239,6 +268,21 @@ export namespace Position {
 
 			// Init zobrist key
             zobrist_key = compute_hash_from_scratch();
+
+			current_phase = 0;
+			current_score = Score{ 0,0 };
+
+            for (int i{}; i < 64; ++i) {
+                Piece p = mailbox[i];
+                if (!p.is_none()) {
+                    Score psq = PSQTables::get_piece_value(p.type(), p.color(), i);
+                    constexpr int weight[] = { 1, -1 };
+                    current_score += psq * weight[static_cast<int>(p.color()) - 1];
+                    if (p.type() > PieceType::PAWN && p.type() < PieceType::KING) {
+                        current_phase += PIECE_PHASE_WEIGHT[static_cast<int>(p.type()) - 1];
+                    }
+				}
+            }
         }
 
         void make_move(Move m) {
@@ -349,6 +393,13 @@ export namespace Position {
             mailbox[sq] = piece;
             // XOR IN
             zobrist_key ^= Zobrist::pieces[idx][sq];
+
+            constexpr int weight[] = { 1, -1 };
+			Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
+			current_score += psq * weight[static_cast<int>(piece.color()) - 1];
+            if (piece.type() > PieceType::PAWN && piece.type() < PieceType::KING) {
+                current_phase += PIECE_PHASE_WEIGHT[static_cast<int>(piece.type()) - 1];
+            }
         }
 
         void inline remove_piece(Piece piece, Square sq) {
@@ -360,6 +411,13 @@ export namespace Position {
             mailbox[sq] = Piece();
             // XOR OUT
             zobrist_key ^= Zobrist::pieces[idx][sq];
+
+			constexpr int weight[] = { 1, -1 };
+            Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
+            current_score -= psq * weight[static_cast<int>(piece.color()) - 1];
+            if (piece.type() > PieceType::PAWN && piece.type() < PieceType::KING) {
+                current_phase -= PIECE_PHASE_WEIGHT[static_cast<int>(piece.type()) - 1];
+			}
         }
 
         void move_piece(Piece piece, int from, int to) {
@@ -550,19 +608,38 @@ export namespace Position {
                 out << "  +---+---+---+---+---+---+---+---+\n";
             }
             out << "    a   b   c   d   e   f   g   h\n";
-			Square ep_sq = metadata.en_passant_square();
+            // --- Meta Data ---
+            Square ep_sq = metadata.en_passant_square();
             out << "EP: " << (ep_sq != Square::SQ_NONE ?
                 std::string{ Types::file_char(ep_sq) } + std::string{ Types::rank_char(ep_sq) }
             : "None") << '\n';
-            out << "Castling rights: "
+
+            out << "Castling: "
                 << (metadata.can_white_kingside() ? "K" : "")
                 << (metadata.can_white_queenside() ? "Q" : "")
                 << (metadata.can_black_kingside() ? "k" : "")
-                << (metadata.can_black_queenside() ? "q" : "")
-				<< "\n";
-            out << "Checks : \n\t" << (is_in_check(Color::WHITE, get_king_square(Color::WHITE)) ? "White Yes " : "White No") << "\n\t"
-				               << (is_in_check(Color::BLACK, get_king_square(Color::BLACK)) ? "Black Yes" : "Black No") << '\n';
+                << (metadata.can_black_queenside() ? "q" : "") << "\n";
+
+            out << "Checks: "
+                << (is_in_check(Color::WHITE, get_king_square(Color::WHITE)) ? "W+" : "-") << " "
+                << (is_in_check(Color::BLACK, get_king_square(Color::BLACK)) ? "B+" : "-") << '\n';
+
             out << (metadata.side_to_move() == Color::BLACK ? "Black" : "White") << " to move\n";
+
+            // --- Evaluation Debugging ---
+            out << "----------------------------------\n";
+            out << "EVALUATION DEBUG:\n";
+            out << "  MG Score: " << current_score.mg << " cp\n";
+            out << "  EG Score: " << current_score.eg << " cp\n";
+            out << "  Phase   : " << current_phase << " / 24\n";
+
+            // This calls your tapering logic
+            int total_eval = evaluate();
+            // Flip it back to White's perspective just for the printout
+            int white_perspective_eval = (metadata.side_to_move() == Color::WHITE) ? total_eval : -total_eval;
+            out << "Final : " << std::showpos << white_perspective_eval << " cp\n";
+            out << std::noshowpos;
+            out << "----------------------------------\n";
         }
 	};
 
