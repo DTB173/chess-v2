@@ -368,7 +368,8 @@ export namespace Position {
         }
 
         bool is_in_check(Color us, Square king_sq) const {
-            return is_square_attacked(king_sq, us);
+            //return is_square_attacked(king_sq, us);
+			return get_attacks_to(king_sq, us) != 0ULL;
         }
         bool is_square_attacked(Square sq, Color us) const {
             int them_off = (us == Color::WHITE) ? 6 : 0;
@@ -466,7 +467,6 @@ export namespace Position {
             if (is_in_check(us, get_king_square(us))) return 0ULL;
 
             ui64 targets = 0ULL;
-            const int enemy_idx = (us == Color::WHITE) ? 1 : 0;
 
             if (us == Color::WHITE) {
                 // Kingside: E1 to G1 (Must check F1)

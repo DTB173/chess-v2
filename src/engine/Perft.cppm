@@ -78,6 +78,7 @@ export namespace Perft
     }
 
     void measure_perft(int depth, bool bulk) {
+		std::cout << "=========== PERFT " << depth << " ===========\n";
         auto start = std::chrono::high_resolution_clock::now();
 
         ui64 nodes = Perft::run_perft(depth, bulk);
@@ -91,5 +92,6 @@ export namespace Perft
         std::cout << "Nodes: " << nodes << "\n";
         std::cout << "Time:  " << elapsed.count() << "s\n";
         std::cout << "NPS:   " << static_cast<ui64>(nps) << "\n";
+		std::cout << "=================================\n\n";
     }
 }
