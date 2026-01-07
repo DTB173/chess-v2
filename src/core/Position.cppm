@@ -161,6 +161,7 @@ export namespace Position {
 		int current_phase{};
         Flags metadata{};
         size_t history_idx{};
+        Square king_sq[2];
     public:
         Position() = default;
 
@@ -172,8 +173,7 @@ export namespace Position {
         Flags get_metadata() const { return metadata; }
 
         inline Square get_king_square(Color c) const { 
-            ui64 bb = board[bb_index(Piece(c, PieceType::KING))];
-			return Bitwise::lsb(bb);
+            return king_sq[static_cast<int>(c) - 1];
         }
 
         inline ui64 get_bitboard(PieceType type, Color c) const {
@@ -182,6 +182,24 @@ export namespace Position {
 
 		inline ui64 get_occupancy(Color c) const {
             return occupancy[static_cast<int>(c) - 1];
+		}
+
+		template<Color c>
+        bool has_non_pawn_material() const {
+            if constexpr (c == Color::WHITE) {
+                ui64 pieces{};
+                for (int i{1}; i < 6; ++i) {
+					pieces |= board[i];
+                }
+                return pieces != 0ULL;
+            }
+            else {
+                ui64 pieces{};
+                for (int i{7}; i < 12; ++i) {
+                    pieces |= board[i];
+                }
+                return pieces != 0ULL;
+            }
 		}
 
         int evaluate() const {
@@ -237,6 +255,8 @@ export namespace Position {
             place(Square::SQ_G1, Piece(Color::WHITE, PieceType::KNIGHT));
             place(Square::SQ_H1, Piece(Color::WHITE, PieceType::ROOK));
 
+            
+
             for (int f = 0; f < 8; ++f)
                 place(static_cast<Square>(f + 8), Piece(Color::WHITE, PieceType::PAWN)); // Rank 2
 
@@ -252,6 +272,9 @@ export namespace Position {
 
             for (int f = 0; f < 8; ++f)
                 place(static_cast<Square>(f + 48), Piece(Color::BLACK, PieceType::PAWN)); // Rank 7
+
+            king_sq[0] = Square::SQ_E1;
+            king_sq[1] = Square::SQ_E8;
 
             // Update occupancy
             int white_idx = static_cast<int>(Color::WHITE) - 1;
@@ -394,6 +417,8 @@ export namespace Position {
             // XOR IN
             zobrist_key ^= Zobrist::pieces[idx][sq];
 
+            if (piece.type() == PieceType::KING) king_sq[static_cast<int>(piece.color()) - 1] = sq;
+
             constexpr int weight[] = { 1, -1 };
 			Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
 			current_score += psq * weight[static_cast<int>(piece.color()) - 1];
@@ -425,8 +450,8 @@ export namespace Position {
             place_piece(piece, to);
         }
 
-        bool is_in_check(Color us, Square king_sq) const {
-            //return is_square_attacked(king_sq, us);
+        bool is_in_check(Color us) const {
+            Square king_sq = get_king_square(us);
 			return get_attacks_to(king_sq, us) != 0ULL;
         }
         bool is_square_attacked(Square sq, Color us) const {
@@ -522,7 +547,7 @@ export namespace Position {
 			constexpr ui64 BLACK_QUEENSIDE_MASK = (1ULL << Square::SQ_D8) | (1ULL << Square::SQ_C8) | (1ULL << Square::SQ_B8);
 
             // 1. If currently in check, castling is illegal
-            if (is_in_check(us, get_king_square(us))) return 0ULL;
+            if (is_in_check(us)) return 0ULL;
 
             ui64 targets = 0ULL;
 
@@ -621,12 +646,14 @@ export namespace Position {
                 << (metadata.can_black_queenside() ? "q" : "") << "\n";
 
             out << "Checks: "
-                << (is_in_check(Color::WHITE, get_king_square(Color::WHITE)) ? "W+" : "-") << " "
-                << (is_in_check(Color::BLACK, get_king_square(Color::BLACK)) ? "B+" : "-") << '\n';
+                << (is_in_check(Color::WHITE) ? "W+" : "-") << " "
+                << (is_in_check(Color::BLACK) ? "B+" : "-") << '\n';
 
             out << (metadata.side_to_move() == Color::BLACK ? "Black" : "White") << " to move\n";
-
+            
+            /*
             // --- Evaluation Debugging ---
+            
             out << "----------------------------------\n";
             out << "EVALUATION DEBUG:\n";
             out << "  MG Score: " << current_score.mg << " cp\n";
@@ -640,6 +667,7 @@ export namespace Position {
             out << "Final : " << std::showpos << white_perspective_eval << " cp\n";
             out << std::noshowpos;
             out << "----------------------------------\n";
+            */
         }
 	};
 
@@ -658,7 +686,7 @@ export namespace Position {
         if (!(targets & (1ULL << to))) return false;
 
         pos.make_move(m);
-        bool in_check = pos.is_in_check(us, pos.get_king_square(us));
+        bool in_check = pos.is_in_check(us);
         pos.undo_move();
 
         return !in_check;
