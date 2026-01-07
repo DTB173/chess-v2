@@ -122,7 +122,7 @@ export namespace PSQTables{
 	};
 
 	consteval std::array<Types::Score, 64> create_array(const std::array<int, 64>& mg_table, 
-												 const std::array<int, 64>& eg_table) 
+												        const std::array<int, 64>& eg_table) 
 	{
 		std::array<Types::Score, 64> result{};
 		for (int i = 0; i < 64; ++i) {
