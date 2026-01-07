@@ -10,6 +10,7 @@ import Types;
 import Zobrist;
 import MoveGen;
 import Perft;
+import Search;
 
 export namespace CLI {
 	enum class OpType{
@@ -86,21 +87,30 @@ export namespace CLI {
 
 	void game_loop() {
 		Zobrist::init();
+		Search::Searcher searcher;
 		Position::Position pos;
 		pos.init_start_pos();
 		pos.print(std::cout);
 		bool playing{ true };
 		OpType operation{OpType::NONE};
 		std::string input;
-
+		int move_count = 0;
 		while (playing) {
+			if (pos.get_metadata().side_to_move() == Types::Color::BLACK && operation != OpType::UNDO) {
+				Types::Move m = searcher.start_search(pos, 12);
+				pos.make_move(m);
+				pos.print(std::cout);
+				++move_count;
+			}
+				
 			std::cout << ">> ";
 			std::getline(std::cin, input);
 			operation = parse_input(input);
 
+
 			switch (operation) {
 			case OpType::QUIT: playing = false; break;
-			case OpType::UNDO: pos.undo_move(); pos.print(std::cout); break;
+			case OpType::UNDO: if (move_count > 2)pos.undo_move(); pos.undo_move(); pos.print(std::cout); break;
 			case OpType::PRINT:pos.print(std::cout); break;
 			case OpType::PLAY: {
 				std::string cmd, arg;
@@ -110,6 +120,7 @@ export namespace CLI {
 					Types::Move m = parse_move(arg.data(), pos);
 					if (Position::is_move_legal(pos, m)) {
 						pos.make_move(m);
+						++move_count;
 					}
 					else {
 						std::cerr << "Invalid move!\n";

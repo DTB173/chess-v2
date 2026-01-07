@@ -8,7 +8,7 @@ target_sources(engine
             Perft.cppm
             Search.cppm 
             Eval.cppm
-            TranspositionTable.cppm 
+            TranspositionTable.cppm
 )
 target_compile_features(engine PUBLIC cxx_std_20)
 set_target_properties(engine PROPERTIES CXX_SCAN_FOR_MODULES ON)
