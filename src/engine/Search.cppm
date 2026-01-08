@@ -167,8 +167,13 @@ export namespace Search {
             return alpha;
         }
 
-        int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta) {
+        int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
 			nodes_visited++;
+
+            if (pos.is_draw()) {
+                return 0;  // Draw score
+            }
+
             int alpha_orig = alpha;
             using namespace TranspositionTable;
 
@@ -182,17 +187,33 @@ export namespace Search {
                 if (alpha >= beta) return tt_score;
             }
 
-            if (pos.is_draw()) {
-                return 0;  // Draw score
-            }
-
             if (depth <= 0) return quiescence(pos, alpha, beta);
+
+            int static_eval = pos.evaluate();
+
+            if (depth <= 3 && static_eval - (150 * depth) >= beta) return beta;
+
+            Color us = pos.get_metadata().side_to_move();
+
+            bool has_material = (us == Color::WHITE) ?
+                pos.has_non_pawn_material<Color::WHITE>() :
+                pos.has_non_pawn_material<Color::BLACK>();
+
+            if (allowed_null && depth >= 3 && !pos.is_in_check(us) && ply > 0 && has_material && static_eval >= beta - 50) {
+                pos.make_null_move();
+                // Pass 'false' to the next depth so it can't null move again
+                int R = 3 + (depth / 6);
+                int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -beta + 1, false);
+                pos.undo_null_move();
+
+                if (score >= beta) return beta;
+            }
 
             // 2. Identify the TT move for sorting
             Move tt_move = (entry != nullptr) ? entry->move : Move{};
 
             MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
-            Color us = pos.get_metadata().side_to_move();
+            
 
             // 3. Pass tt_move to your picker so it searches it FIRST
             MoveSorter::MovePicker picker(list, pos, tt_move);
@@ -218,19 +239,29 @@ export namespace Search {
                 legal_moves++;
                 int score;
 
-
-
 				bool is_check = pos.is_in_check(opponent_of(us));
-                if (depth >= 3 && moves_searched > 4 && !move.is_capture() && !is_check) {
-                    // Search with a reduction (e.g., 1 or 2 plies)
-                    score = -negamax(pos, depth - 2, ply + 1, -alpha - 1, -alpha);
-
-                    // If the reduced search "failed high," we must re-search at full depth
-                    if (score > alpha)
-                        score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha);
+                // Principal Variation Search (PVS) + LMR
+                if (moves_searched == 1) {
+                    // Full window search for the first (presumably best) move
+                    score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                 }
                 else {
-                    score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha);
+                    // LMR Logic
+                    if (depth >= 3 && moves_searched > 4 && !move.is_capture() && !pos.is_in_check(opponent_of(us))) {
+                        score = -negamax(pos, depth - 2, ply + 1, -alpha - 1, -alpha, true);
+                    }
+                    else {
+                        score = alpha + 1; // Force a full search if LMR isn't applicable
+                    }
+
+                    // Zero Window Search (PVS)
+                    if (score > alpha) {
+                        score = -negamax(pos, depth - 1, ply + 1, -alpha - 1, -alpha, true);
+                        // If it still beats alpha, do a full window search
+                        if (score > alpha && score < beta) {
+                            score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
+                        }
+                    }
                 }
                 pos.undo_move();
 
@@ -262,7 +293,7 @@ export namespace Search {
 
             if(ply == 0)
 				best_move_root = best_move_at_node;
-            return alpha;
+            return best_score;
         }
     public:
         Move start_search(Position::Position& pos, int target_depth) {
@@ -273,7 +304,7 @@ export namespace Search {
 			nodes_visited = 0;
             for (int d = 1; d <= target_depth; ++d) {
                 // We search with a very wide window (-infinity to +infinity)
-                int score = negamax(pos, d, 0, -30001, 30001);
+                int score = negamax(pos, d, 0, -30001, 30001, true);
 
                 best_score_root = score;
 
@@ -288,17 +319,13 @@ export namespace Search {
             }
 
 			auto end_time = std::chrono::high_resolution_clock::now();
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-            uint64_t nps = (ms > 0) ? (nodes_visited * 1000) / ms : 0;
 
-            std::cout << "info depth " << target_depth
-                      << " nodes " << nodes_visited
-                      << " nps " << nps << '\n';
-            std::cout<< std::format("Search with depth {} completed in {:.2f} seconds. Best Move: {} with score {}\n",
-                target_depth,
-                std::chrono::duration<double>(end_time - start_time).count(),
-                Types::move_to_string(best_move_root),
-				best_score_root);
+            auto duration = end_time - start_time;
+            double seconds = std::chrono::duration<double>(duration).count();
+            uint64_t nps = (seconds > 0.001) ? static_cast<uint64_t>(nodes_visited / seconds) : 0;
+
+            std::cout << std::format("[ Info ] depth {} nodes {} nps {} search time {:.3f} seconds\n", target_depth, nodes_visited, nps, seconds);
+            std::cout << std::format("[ Res  ] Best Move {} with score {}\n", Types::move_to_string(best_move_root), best_score_root);
             return final_move;
         }
     };
