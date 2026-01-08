@@ -3,11 +3,9 @@ add_library(engine STATIC)
 target_sources(engine
     PUBLIC
         FILE_SET cxx_modules TYPE CXX_MODULES FILES
-            ChessEngine.cppm
             MoveGen.cppm
             Perft.cppm
             Search.cppm 
-            Eval.cppm
             TranspositionTable.cppm
 )
 target_compile_features(engine PUBLIC cxx_std_20)
