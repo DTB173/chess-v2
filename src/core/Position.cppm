@@ -149,7 +149,7 @@ export namespace Position {
             Flags prev_flags;
         };
 
-        std::array<StateRecord, 1024> history;
+        std::array<StateRecord, 4096> history;
         std::array<ui64, 12> board{};
         std::array<ui64, 2> occupancy{};
         ui64 total_pieces;
@@ -306,6 +306,18 @@ export namespace Position {
                     }
 				}
             }
+        }
+
+        void make_null_move() {
+            history[history_idx++] = { zobrist_key, Move{}, Piece(), metadata };
+            metadata.toggle_turn();
+            zobrist_key ^= Zobrist::side;
+            metadata.clear_en_passant();
+        }
+        void undo_null_move() {
+            StateRecord prev = history[--history_idx];
+            metadata = prev.prev_flags;
+            zobrist_key = prev.prev_zobrist;
         }
 
         void make_move(Move m) {
