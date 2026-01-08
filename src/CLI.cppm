@@ -97,7 +97,7 @@ export namespace CLI {
 		int move_count = 0;
 		while (playing) {
 			if (pos.get_metadata().side_to_move() == Types::Color::BLACK && operation != OpType::UNDO) {
-				Types::Move m = searcher.start_search(pos, 12);
+				Types::Move m = searcher.start_search(pos, 16);
 				pos.make_move(m);
 				pos.print(std::cout);
 				++move_count;
