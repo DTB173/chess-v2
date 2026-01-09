@@ -131,6 +131,7 @@ export namespace PSQTables{
 		return result;
 	}
 
+	// Build individual piece PSQ tables
 	constexpr std::array<Types::Score, 64> PAWN_PSQ = create_array(PAWN_PSQ_MG, PAWN_PSQ_EG);
 	constexpr std::array<Types::Score, 64> BISHOP_PSQ = create_array(BISHOP_PSQ_MG, BISHOP_PSQ_EG);
 	constexpr std::array<Types::Score, 64> ROOK_PSQ = create_array(ROOK_PSQ_MG, ROOK_PSQ_EG);
@@ -138,6 +139,7 @@ export namespace PSQTables{
 	constexpr std::array<Types::Score, 64> QUEEN_PSQ_TABLE = create_array(QUEEN_PSQ, QUEEN_PSQ);
 	constexpr std::array<Types::Score, 64> KING_PSQ = create_array(KING_PSQ_MG, KING_PSQ_EG);
 
+	// Aggregate all PSQ tables
 	constexpr const std::array<std::array<Types::Score, 64>, 6> PSQ_TABLES = {
 		PAWN_PSQ,
 		ROOK_PSQ,
@@ -147,11 +149,11 @@ export namespace PSQTables{
 		KING_PSQ
 	};
 
-	inline int get_material_value(Types::PieceType type) {
+	constexpr inline int get_material_value(Types::PieceType type) {
 		return MATERIAL_VALUES[static_cast<int>(type) - 1];
 	}
 
-	inline const Types::Score get_piece_value(Types::PieceType type, Types::Color color, int square) {
+	constexpr inline const Types::Score get_piece_value(Types::PieceType type, Types::Color color, int square) {
 		int index = (color == Types::Color::WHITE) ? square : (square ^ 56);
 		Types::Score s = PSQ_TABLES[static_cast<int>(type) - 1][index];
 		int mat = get_material_value(type);
