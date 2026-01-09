@@ -49,6 +49,7 @@ export namespace MoveGen {
 		}
 	}
 
+	// Special case for parrarel pawns
 	inline void serialize_relative(MoveList& list, ui64 targets, int shift, int flags) {
 		while (targets) {
 			int to = Bitwise::pop_lsb(targets);
@@ -69,6 +70,7 @@ export namespace MoveGen {
 		}
 	}
 
+	// Special case for parrarel pawns: they need to generate 4 moves per target square
 	inline void serialize_promotions_relative(MoveList& list, ui64 targets, int shift, bool is_capture) {
 		while (targets) {
 			int to = Bitwise::pop_lsb(targets);
@@ -258,5 +260,21 @@ export namespace MoveGen {
 
 	[[nodiscard]] MoveList generate_all_moves(const Position::Position & pos) {
 		return generate_moves<MoveType::ALL>(pos);
+	}
+
+	bool has_legal_moves(Position::Position& pos) {
+		Color us = pos.turn();
+
+		auto captures = MoveGen::generate_captures(pos);
+		for (auto move : captures) {
+			if (pos.is_legal(move)) return true;
+		}
+
+		auto quiets = MoveGen::generate_quiets(pos);
+		for (auto move : quiets) {
+			if (pos.is_legal(move)) return true;
+		}
+
+		return false;
 	}
 }
