@@ -77,6 +77,7 @@ export namespace Perft
         std::cout << "\nTotal: " << total_nodes << std::endl;
     }
 
+	// Performance measurement utility (startpos)
     void measure_perft(int depth, bool bulk) {
 		std::cout << "=========== PERFT " << depth << " ===========\n";
         auto start = std::chrono::high_resolution_clock::now();
@@ -92,6 +93,6 @@ export namespace Perft
         std::cout << "Nodes: " << nodes << "\n";
         std::cout << "Time:  " << elapsed.count() << "s\n";
         std::cout << "NPS:   " << static_cast<ui64>(nps) << "\n";
-		std::cout << "=================================\n\n";
+		std::cout << "===============================\n\n";
     }
 }
