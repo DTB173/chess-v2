@@ -1,15 +1,23 @@
 module;
 #include <vector>
+#include <limits>
 export module TranspositionTable;
 import Types;
+
+export namespace Constants {
+    constexpr int MATE_SCORE = 32000;
+    constexpr int INFINITE_SCORE = 32001;
+    constexpr int MATE_THRESHOLD = 31000;
+	constexpr int DRAW_SCORE = 0;
+}
+
 export namespace TranspositionTable {
 	using namespace Types;
 
 	using i16 = std::int16_t;
 	using i8 = std::int8_t;
 
-    constexpr int MATE_SCORE     = 32000;
-    constexpr int MATE_THRESHOLD = 31000;
+
 
     enum NodeType : ui8 {
         EXACT = 0,
@@ -43,14 +51,14 @@ export namespace TranspositionTable {
         // Helper to adjust mate scores relative to the root
         // This prevents the engine from getting confused by cached mates
         static int16_t score_to_tt(int score, int ply) {
-            if (score > MATE_THRESHOLD) return (int16_t)(score + ply);
-            if (score < -MATE_THRESHOLD) return (int16_t)(score - ply);
+            if (score > Constants::MATE_THRESHOLD) return (int16_t)(score + ply);
+            if (score < -Constants::MATE_THRESHOLD) return (int16_t)(score - ply);
             return static_cast<i16>(score);
         }
 
         static int16_t score_from_tt(int score, int ply) {
-            if (score > MATE_THRESHOLD) return (int16_t)(score - ply);
-            if (score < -MATE_THRESHOLD) return (int16_t)(score + ply);
+            if (score > Constants::MATE_THRESHOLD) return (int16_t)(score - ply);
+            if (score < -Constants::MATE_THRESHOLD) return (int16_t)(score + ply);
             return static_cast<i16>(score);
         }
 
