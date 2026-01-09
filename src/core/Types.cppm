@@ -10,7 +10,7 @@ export namespace Types {
     using ui32 = std::uint32_t;
 	using ui16 = std::uint16_t;
     using ui8  = std::uint8_t;
-    
+   
     namespace MoveFlags {
         // Basic types
         constexpr int Quiet      = 0b0000 << 12;
@@ -85,7 +85,7 @@ export namespace Types {
         ui16 data;
 
         // Bit layout: 
-        //  0-5 : From square
+        //  0- 5: From square
         //  6-11: To square
         // 12-15: Flags
         static constexpr ui16 FROM_MASK = 0x3F;
@@ -120,6 +120,8 @@ export namespace Types {
 
         bool operator==(const Move& other) const { return data == other.data; }
     };
+
+	constexpr Move NO_MOVE = Move();
 
     struct Square {
         enum SquareName : ui16 {
@@ -170,6 +172,13 @@ export namespace Types {
         s += rank_char(from_sq);
         s += file_char(to_sq);
         s += rank_char(to_sq);
+
+        if (move.is_promo()) {
+            s+= move.promotion_type() == PieceType::KNIGHT ? 'n' :
+                move.promotion_type() == PieceType::BISHOP ? 'b' :
+                move.promotion_type() == PieceType::ROOK   ? 'r' :
+				'q';
+        }
 
         return s;
     }
