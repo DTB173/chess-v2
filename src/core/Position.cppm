@@ -5,6 +5,7 @@ module;
 #include <cassert>
 #include <string>
 #include <algorithm>
+#include <sstream>
 export module Position;
 
 import Types;
@@ -107,6 +108,20 @@ export namespace Position {
             bits &= ~(mask(MASKS::EPFile) | mask(MASKS::EPValid));
         }
 
+        ui16 ep_index() const {
+            assert(bits & mask(MASKS::EPValid));
+            return (bits & mask(MASKS::EPFile)) >> 4;
+        }
+
+        // Castling
+        void set_castling_rights(bool wk, bool wq, bool bk, bool bq) {
+            bits &= 0xFFF0; // Clear current castling rights
+            if (wk) bits |= mask(MASKS::WhiteKingside);
+            if (wq) bits |= mask(MASKS::WhiteQueenside);
+            if (bk) bits |= mask(MASKS::BlackKingside);
+            if (bq) bits |= mask(MASKS::BlackQueenside);
+		}
+
         void update_castling_rights(int from, int to) {
             constexpr ui16 CastlingRightsMask[64] = {
                 13, 15, 15, 15, 12, 15, 15, 14, // Rank 1: A1=1101, E1=1100, H1=1110
@@ -125,11 +140,9 @@ export namespace Position {
         ui16 castling_index()const {
 			return bits & 0x0F;
         }
-        ui16 ep_index() const {
-			assert(bits & mask(MASKS::EPValid));
-            return (bits & mask(MASKS::EPFile)) >> 4;
-        }
 
+		// Halfmove clock
+		void set_clock(ui8 clock) { halfmove_clock = clock; }
 		void reset_clock() { halfmove_clock = 0; }
 		void increment_clock() { ++halfmove_clock; }
         ui8  get_clock() const { return halfmove_clock; }
@@ -165,13 +178,14 @@ export namespace Position {
     public:
         Position() = default;
 
+		// prevent accidental copying
 		Position(const Position& other) = delete;
 		Position& operator=(const Position& other) = delete;
 
 		ui64 get_zobrist_key() const { return zobrist_key; }
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
-
+		inline Color turn() const { return metadata.side_to_move(); }
         inline Square get_king_square(Color c) const { 
             return king_sq[static_cast<int>(c) - 1];
         }
@@ -184,9 +198,24 @@ export namespace Position {
             return occupancy[static_cast<int>(c) - 1];
 		}
 
-		template<Color c>
-        bool has_non_pawn_material() const {
-            if constexpr (c == Color::WHITE) {
+        inline bool is_legal(Move m) {
+            Color us = turn(); // get 'us' before, make_move toogles turn
+            make_move(m);
+			bool in_check = is_in_check(us);
+            undo_move();
+			return !in_check;
+        }
+
+        inline bool gives_check(Move m) {
+            make_move(m);
+			bool in_check = is_in_check(turn());
+			undo_move();
+			return in_check;
+        }
+
+		// zugzwang detection helper
+        bool has_non_pawn_material(Color c) const {
+            if (c == Color::WHITE) {
                 ui64 pieces{};
                 for (int i{1}; i < 6; ++i) {
 					pieces |= board[i];
@@ -219,7 +248,7 @@ export namespace Position {
 
             // 2. Repetition (Check back through history)
             // We only need to check back as far as the half_move_clock allows
-            int stop = (history_idx > metadata.get_clock()) ? (int)history_idx - metadata.get_clock() : 0;
+            int stop = (history_idx > metadata.get_clock()) ? static_cast<int>(history_idx - metadata.get_clock()) : 0;
 
             // We only check every 2nd move (our previous turns)
             for (int i = history_idx - 2; i >= stop; i -= 2) {
@@ -230,7 +259,165 @@ export namespace Position {
 
             return false;
         }
+        bool set_fen(const std::string& fen) {
+            using namespace Types;
 
+            // Clear board state
+            for (int i = 0; i < 12; ++i) board[i] = 0ULL;
+            for (int i = 0; i < 64; ++i) mailbox[i] = Piece();
+
+            occupancy[0] = occupancy[1] = 0ULL;
+            total_pieces = 0ULL;
+            king_sq[0] = king_sq[1] = Square::SQ_NONE;
+
+            metadata = Flags(); // resets bits to 0xF (all castling), clears EP, white to move, clock=0
+
+            std::istringstream ss(fen);
+            std::string token;
+
+            // 1. Piece placement
+            if (!(ss >> token)) return false;
+
+            int rank = 7, file = 0;
+            for (char c : token) {
+                if (c == '/') {
+                    if (file != 8) return false;
+                    --rank;
+                    file = 0;
+                    continue;
+                }
+
+                if (std::isdigit(c)) {
+                    file += c - '0';
+                    continue;
+                }
+
+                PieceType type = PieceType::NONE;
+                Color color = Color::WHITE; // default, overridden for black
+
+                switch (c) {
+                case 'P': type = PieceType::PAWN;   break;
+                case 'N': type = PieceType::KNIGHT; break;
+                case 'B': type = PieceType::BISHOP; break;
+                case 'R': type = PieceType::ROOK;   break;
+                case 'Q': type = PieceType::QUEEN;  break;
+                case 'K': type = PieceType::KING;   break;
+                case 'p': type = PieceType::PAWN;   color = Color::BLACK; break;
+                case 'n': type = PieceType::KNIGHT; color = Color::BLACK; break;
+                case 'b': type = PieceType::BISHOP; color = Color::BLACK; break;
+                case 'r': type = PieceType::ROOK;   color = Color::BLACK; break;
+                case 'q': type = PieceType::QUEEN;  color = Color::BLACK; break;
+                case 'k': type = PieceType::KING;   color = Color::BLACK; break;
+                default: return false;
+                }
+
+                if (type == PieceType::NONE || file >= 8) return false;
+
+                int sq = rank * 8 + file;
+                Piece piece(color, type);
+
+                int bb_idx = bb_index(piece);
+                Bitwise::set_bit(board[bb_idx], sq);
+                mailbox[sq] = piece;
+
+                if (type == PieceType::KING) {
+                    king_sq[static_cast<int>(color) - 1] = static_cast<Square>(sq);
+                }
+
+                ++file;
+            }
+
+            if (rank != 0 || file != 8) return false;
+
+            // 2. Side to move
+            if (!(ss >> token)) return false;
+            if (token == "w") {
+                // flags already has BlackToMove = 0
+            }
+            else if (token == "b") {
+                metadata.toggle_turn(); // sets BlackToMove bit
+            }
+            else {
+                return false;
+            }
+
+            // 3. Castling rights
+            if (!(ss >> token)) return false;
+            if (token != "-") {
+				bool wk = false, wq = false, bk = false, bq = false;
+                for (char c : token) {
+                    if (c == 'K') wk = true;
+                    else if (c == 'Q') wq = true;
+                    else if (c == 'k') bk = true;
+                    else if (c == 'q') bq = true;
+                }
+				metadata.set_castling_rights(wk, wq, bk, bq);
+            }
+            else {
+				metadata.set_castling_rights(false, false, false, false);
+            }
+
+            // 4. En passant square
+            if (!(ss >> token)) return false;
+            if (token != "-") {
+                if (token.size() != 2) return false;
+                int ep_file = token[0] - 'a';
+                int ep_rank = token[1] - '1';
+                if (ep_file < 0 || ep_file > 7 || (ep_rank != 2 && ep_rank != 5)) return false;
+
+                metadata.set_en_passant_file(ep_file);
+            }
+
+            // 5. Halfmove clock
+            if (ss >> token) {
+                try {
+                    int clock = std::stoi(token);
+                    metadata.set_clock(static_cast<ui8>(std::min(clock, 255)));
+                }
+                catch (...) {
+                    return false;
+                }
+
+                // 6. Fullmove number (optional to store)
+                if (ss >> token) {
+                }
+            }
+
+            // Rebuild occupancy bitboards
+            int white_idx = static_cast<int>(Color::WHITE) - 1;
+            int black_idx = static_cast<int>(Color::BLACK) - 1;
+            for (int i = 0; i < 6; ++i) {
+                occupancy[white_idx] |= board[i];
+                occupancy[black_idx] |= board[i + 6];
+            }
+            total_pieces = occupancy[white_idx] | occupancy[black_idx];
+
+            // Validate kings present
+            if (king_sq[white_idx] == Square::SQ_NONE || king_sq[black_idx] == Square::SQ_NONE)
+                return false;
+
+            // Recompute zobrist key
+            zobrist_key = compute_hash_from_scratch();
+
+            // Recompute evaluation phase and score
+            current_phase = 0;
+            current_score = Score{ 0, 0 };
+
+            for (int sq = 0; sq < 64; ++sq) {
+                Piece p = mailbox[sq];
+                if (p.type() != PieceType::NONE) {
+                    Score psq = PSQTables::get_piece_value(p.type(), p.color(), sq);
+                    int sign = (p.color() == Color::WHITE) ? 1 : -1;
+                    current_score += psq * sign;
+
+                    if (p.type() > PieceType::PAWN && p.type() < PieceType::KING) {
+                        current_phase += PIECE_PHASE_WEIGHT[static_cast<int>(p.type()) - 1];
+                    }
+                }
+            }
+
+            return true;
+        }
         void init_start_pos() {
             using Types::Square;
             using Types::Piece;
@@ -276,6 +463,7 @@ export namespace Position {
             king_sq[0] = Square::SQ_E1;
             king_sq[1] = Square::SQ_E8;
 
+			metadata = Flags(); // all castling rights, white to move, no ep, clock=0
             // Update occupancy
             int white_idx = static_cast<int>(Color::WHITE) - 1;
             int black_idx = static_cast<int>(Color::BLACK) - 1;
@@ -308,6 +496,7 @@ export namespace Position {
             }
         }
 
+        // NPM helpers
         void make_null_move() {
             history[history_idx++] = { zobrist_key, Move{}, Piece(), metadata };
             metadata.toggle_turn();
@@ -463,8 +652,8 @@ export namespace Position {
         }
 
         bool is_in_check(Color us) const {
-            Square king_sq = get_king_square(us);
-			return get_attacks_to(king_sq, us) != 0ULL;
+            Square king_sqr = get_king_square(us);
+			return get_attacks_to(king_sqr, us) != 0ULL;
         }
         bool is_square_attacked(Square sq, Color us) const {
             int them_off = (us == Color::WHITE) ? 6 : 0;
@@ -511,7 +700,7 @@ export namespace Position {
                              board[bb_index(Piece(them, PieceType::QUEEN))]);
 
             // Pawns
-            // Pawns attack *towards us*, so use `us` for attack direction
+            // If we were a pawn, do we have attack on enemy pawn?
             attackers |= AttackTables::get_pawn_attacks(sq, us) &
                          board[bb_index(Piece(them, PieceType::PAWN))];
 
