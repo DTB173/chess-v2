@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <array>
 #include <algorithm>
@@ -14,7 +14,7 @@ import MoveGen;
 import PSQTables;
 import TranspositionTable;
 
-export namespace MoveSorter {
+export namespace Sort {
 	using namespace Types;
 
     constexpr int MVV_LVA[7][7] = {
@@ -73,7 +73,6 @@ export namespace MoveSorter {
 
     class MovePicker {
     public:
-        // Pass tt_move here
         MovePicker(MoveGen::MoveList& list, const Position::Position& pos, Move tt_move = Move{}) : list(list) {
             for (int i = 0; i < list.size(); ++i) {
                 // If it's the move from the TT, give it a massive bonus to ensure it's first
@@ -85,9 +84,19 @@ export namespace MoveSorter {
                 }
             }
         }
-
+        Types::Move next_legal(Position::Position& pos) {
+            Types::Move move;
+            while ((move = next()) != NO_MOVE) {
+                if (pos.is_legal(move)) {
+                    return move;
+                }
+            }
+            return NO_MOVE;
+		}
+    private:
+		// Selection sort style picker: each call to next() finds the best remaining move
         Types::Move next() {
-            if (current_idx >= list.size()) return Move{};
+            if (current_idx >= list.size()) return NO_MOVE;
 
             int best_idx = current_idx;
             for (int i = current_idx + 1; i < list.size(); ++i) {
@@ -110,224 +119,198 @@ export namespace MoveSorter {
 
 export namespace Search {
     using namespace Types;
-	TranspositionTable::TranspositionTable tt(64); // 64 MB TT
+    using TranspositionTable::TTEntry;
+    TranspositionTable::TranspositionTable tt(64);
+
+    constexpr int NO_TT_CUTOFF = 1000000;
+
+    // Safety check: Don't use standard INT_MAX to avoid overflows
+    constexpr int INF = 32001;
+    constexpr int MATE_VAL = 32000;
+    constexpr int MAX_PLY = 64;
+
     class Searcher {
     private:
         int max_depth{};
         Types::Move best_move_root{};
-		int best_score_root{};
+        int best_score_root{};
         ui64 nodes_visited{};
+        int max_sel_depth{};
 
-        int quiescence(Position::Position& pos, int alpha, int beta) {
-            if (pos.is_draw()) {
-                return 0;
+        int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
+            TTEntry* entry = tt.probe(zobrist);
+            if (!entry) return NO_TT_CUTOFF;
+
+            tt_move = entry->move;
+            if (entry->depth >= depth) {
+                int tt_score = tt.score_from_tt(entry->score, ply);
+                if (entry->type == TranspositionTable::EXACT) return tt_score;
+                if (entry->type == TranspositionTable::LOWER_BOUND) alpha = std::max(alpha, tt_score);
+                if (entry->type == TranspositionTable::UPPER_BOUND) beta = std::min(beta, tt_score);
+                if (alpha >= beta) return tt_score;
+            }
+            return NO_TT_CUTOFF;
+        }
+
+        //Quiescence Search
+        int quiescence(Position::Position& pos, int alpha, int beta, int ply) {
+            nodes_visited++;
+            if (pos.is_draw()) return 0;
+            if (ply > max_sel_depth) max_sel_depth = ply;
+
+            // Safety: limit QS depth
+            if (ply >= MAX_PLY) return pos.evaluate();
+
+            int standing_pat = pos.evaluate();
+            if (ply >= MAX_PLY) return standing_pat;
+
+            bool in_check = pos.is_in_check(pos.turn());
+
+            if (in_check) {
+                // If in check, we must ignore standing_pat and search for evasions
+                standing_pat = -INF;
+            }
+            else {
+                if (standing_pat >= beta) return beta;
+                if (standing_pat > alpha) alpha = standing_pat;
             }
 
-            // 1. Check handling
-			Color us = pos.get_metadata().side_to_move();
-            bool in_check = pos.is_in_check(us);
-
-            // 2. Standing Pat (Only if not in check)
-            if (!in_check) {
-                int stand_pat = pos.evaluate();
-                if (stand_pat >= beta) return beta;
-                if (alpha < stand_pat) alpha = stand_pat;
-            }
-
-            // 3. Generate Moves
-            // If in check, we need moves that escape check (often all legal moves)
-            // If not in check, only captures
-            MoveGen::MoveList list = in_check
-                ? MoveGen::generate_all_moves(pos)
-                : MoveGen::generate_captures(pos);
-
-            // If in check and no moves, it's checkmate (handled by the loop returning alpha)
-            // but if not in check and no captures, standing pat (alpha) is returned.
-
-            MoveSorter::MovePicker picker(list, pos);
+            MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures(pos);
+            Sort::MovePicker picker(list, pos);
             Move move;
+            int legal_moves = 0;
 
-			int legal_moves = 0;
-            while ((move = picker.next()) != Move{}) {
+            while ((move = picker.next_legal(pos)) != NO_MOVE) {
+                legal_moves++;
                 pos.make_move(move);
-
-                if (pos.is_in_check(us)) {
-                    pos.undo_move();
-                    continue;
-                }
-				++legal_moves;
-                int score = -quiescence(pos, -beta, -alpha);
+                int score = -quiescence(pos, -beta, -alpha, ply + 1);
                 pos.undo_move();
 
                 if (score >= beta) return beta;
                 if (score > alpha) alpha = score;
             }
 
-            if (in_check && legal_moves == 0) return -30000;
+            // Checkmate detection in Q-Search
+            if (in_check && legal_moves == 0) return -MATE_VAL + ply;
+
             return alpha;
         }
 
+        // Main Negamax Search
         int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
-			nodes_visited++;
+            // 1. Terminal / Draw checks
+            if (pos.is_draw()) return 0;
+            if (ply >= 64) return pos.evaluate(); // Safety cutoff
 
-            if (pos.is_draw()) {
-                return 0;  // Draw score
-            }
+            // 2. Transposition Table
+            Move tt_move = NO_MOVE;
+            int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
+            if (tt_score != NO_TT_CUTOFF && ply > 0) return tt_score;
 
-            int alpha_orig = alpha;
-            using namespace TranspositionTable;
+            // 3. Quiescence at leaf
+            if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
-            // 1. TT Probe
-            TTEntry* entry = tt.probe(pos.get_zobrist_key());
-            if (entry != nullptr && entry->depth >= depth) {
-                int tt_score = tt.score_from_tt(entry->score, ply);
-                if (entry->type == EXACT) return tt_score;
-                else if (entry->type == LOWER_BOUND) alpha = std::max(alpha, tt_score);
-                else if (entry->type == UPPER_BOUND) beta = std::min(beta, tt_score);
-                if (alpha >= beta) return tt_score;
-            }
+            nodes_visited++;
+            bool in_check = pos.is_in_check(pos.turn());
 
-            if (depth <= 0) return quiescence(pos, alpha, beta);
-
-            int static_eval = pos.evaluate();
-
-            if (depth <= 3 && static_eval - (150 * depth) >= beta) return beta;
-
-            Color us = pos.get_metadata().side_to_move();
-
-            bool has_material = (us == Color::WHITE) ?
-                pos.has_non_pawn_material<Color::WHITE>() :
-                pos.has_non_pawn_material<Color::BLACK>();
-
-            if (allowed_null && depth >= 3 && !pos.is_in_check(us) && ply > 0 && has_material && static_eval >= beta - 50) {
+            // 4. Null Move Pruning          
+            if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
                 pos.make_null_move();
-                // Pass 'false' to the next depth so it can't null move again
-                int R = 3 + (depth / 6);
-                int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -beta + 1, false);
+                // Search with reduced depth and zero window (beta-1, beta)
+                int score = -negamax(pos, depth - 3, ply + 1, -beta, -beta + 1, false);
                 pos.undo_null_move();
-
-                if (score >= beta) return beta;
+                if (score >= beta) return beta; // Cutoff
             }
 
-            // 2. Identify the TT move for sorting
-            Move tt_move = (entry != nullptr) ? entry->move : Move{};
-
+            // 5. Move Generation
             MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
-            
+            Sort::MovePicker picker(list, pos, tt_move);
+            Move move;
 
-            // 3. Pass tt_move to your picker so it searches it FIRST
-            MoveSorter::MovePicker picker(list, pos, tt_move);
-
-            Types::Move move;
             int legal_moves = 0;
-            Move best_move_at_node = Move{}; // Local best move
-            int best_score = -MATE_SCORE;    // Local best score
-			int moves_searched = 0;
+            int best_score = -INF;
+            Move best_move = NO_MOVE;
+            int old_alpha = alpha;
 
-            while ((move = picker.next()) != Types::Move{}) {
-                pos.make_move(move);
-                if (pos.is_in_check(us)) {
-                    pos.undo_move();
-                    continue;
-                }
-
-                if (legal_moves == 0) {
-                    best_move_at_node = move;
-                    if (ply == 0) best_move_root = move;
-                }
-				moves_searched++;
+            // 6. Loop
+            while ((move = picker.next_legal(pos)) != NO_MOVE) {
                 legal_moves++;
+                pos.make_move(move);
+
                 int score;
 
-				bool is_check = pos.is_in_check(opponent_of(us));
-                // Principal Variation Search (PVS) + LMR
-                if (moves_searched == 1) {
-                    // Full window search for the first (presumably best) move
+                // Principal Variation Search Logic
+                if (legal_moves == 1) {
+                    // First move: Full Window Search
                     score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                 }
                 else {
-                    // LMR Logic
-                    if (depth >= 3 && moves_searched > 4 && !move.is_capture() && !pos.is_in_check(opponent_of(us))) {
-                        score = -negamax(pos, depth - 2, ply + 1, -alpha - 1, -alpha, true);
-                    }
-                    else {
-                        score = alpha + 1; // Force a full search if LMR isn't applicable
-                    }
+                    // Late moves: Zero Window Search
+                    score = -negamax(pos, depth - 1, ply + 1, -alpha - 1, -alpha, true);
 
-                    // Zero Window Search (PVS)
-                    if (score > alpha) {
-                        score = -negamax(pos, depth - 1, ply + 1, -alpha - 1, -alpha, true);
-                        // If it still beats alpha, do a full window search
-                        if (score > alpha && score < beta) {
-                            score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
-                        }
+                    // If the move beat alpha, we must re-search with full window
+                    if (score > alpha && score < beta) {
+                        score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                     }
                 }
+
                 pos.undo_move();
 
                 if (score > best_score) {
                     best_score = score;
-                    best_move_at_node = move;
+                    best_move = move;
+                    if (ply == 0) best_move_root = move;
                 }
 
                 if (score > alpha) {
                     alpha = score;
-                    if (ply == 0) best_move_root = move;
                 }
 
-                if (alpha >= beta) break; // Fail-high (LOWER_BOUND)
+                if (alpha >= beta) break; // Beta Cutoff
             }
 
-            // 4. Correct Mate/Stalemate Detection
+            // 7. Checkmate / Stalemate
             if (legal_moves == 0) {
-                if (pos.is_in_check(us)) return -MATE_SCORE + ply;
-                return 0;
+                return in_check ? -MATE_VAL + ply : 0;
             }
 
-            // 5. Store in TT using LOCAL best_score and best_move_at_node
-            ui8 type = (best_score <= alpha_orig) ? UPPER_BOUND :
-                (best_score >= beta) ? LOWER_BOUND : EXACT;
+            // 8. TT Store
+            using TranspositionTable::NodeType;
+            NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
+                (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
 
-            if(best_move_at_node != Move{})
-                tt.store(pos.get_zobrist_key(), depth, best_score, best_move_at_node, type, ply);
+            tt.store(pos.get_zobrist_key(), depth, tt.score_to_tt(best_score, ply), best_move, bound, ply);
 
-            if(ply == 0)
-				best_move_root = best_move_at_node;
             return best_score;
         }
+
     public:
         Move start_search(Position::Position& pos, int target_depth) {
-            best_move_root = Types::Move{}; // Reset
-            Move final_move{};
-			auto start_time = std::chrono::high_resolution_clock::now();
-            // Iterative Deepening
-			nodes_visited = 0;
-            for (int d = 1; d <= target_depth; ++d) {
-                // We search with a very wide window (-infinity to +infinity)
-                int score = negamax(pos, d, 0, -30001, 30001, true);
+            best_move_root = NO_MOVE;
+            nodes_visited = 0;
+            max_sel_depth = 0;
 
-                best_score_root = score;
+            auto start_time = std::chrono::high_resolution_clock::now();
 
-                if (best_move_root != Move{})
-                    final_move = best_move_root;
+            for (int depth = 1; depth <= target_depth; ++depth) {
+                int score = negamax(pos, depth, 0, -INF, INF, true);
 
-                // Output to see what's happening
-                //std::cout << "Depth " << d
-                //    << " | Score: " << score
-                //    << " | Best Move: " << Types::move_to_string(best_move_root)
-                //    << '\n';
+                auto current_time = std::chrono::high_resolution_clock::now();
+                auto duration = current_time - start_time;
+                double seconds = std::chrono::duration<double>(duration).count();
+                uint64_t nps = (seconds > 0.001) ? static_cast<uint64_t>(nodes_visited / seconds) : 0;
+
+                std::string score_str;
+                if (score > MATE_VAL - 100) score_str = "mate " + std::to_string((MATE_VAL - score + 1) / 2);
+                else if (score < -MATE_VAL + 100) score_str = "mate -" + std::to_string((MATE_VAL + score) / 2);
+                else score_str = "cp " + std::to_string(score);
+
+                std::cout << std::format("info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}\n",
+                    depth, max_sel_depth, score_str, nodes_visited, nps, static_cast<int>(seconds * 1000),
+                    (best_move_root != NO_MOVE ? Types::move_to_string(best_move_root) : "none"))
+                    << std::flush;
             }
-
-			auto end_time = std::chrono::high_resolution_clock::now();
-
-            auto duration = end_time - start_time;
-            double seconds = std::chrono::duration<double>(duration).count();
-            uint64_t nps = (seconds > 0.001) ? static_cast<uint64_t>(nodes_visited / seconds) : 0;
-
-            std::cout << std::format("[ Info ] depth {} nodes {} nps {} search time {:.3f} seconds\n", target_depth, nodes_visited, nps, seconds);
-            std::cout << std::format("[ Res  ] Best Move {} with score {}\n", Types::move_to_string(best_move_root), best_score_root);
-            return final_move;
+            return best_move_root;
         }
     };
-
 }
