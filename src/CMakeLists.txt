@@ -4,6 +4,7 @@ target_sources(chess
     PUBLIC
 		FILE_SET cxx_modules TYPE CXX_MODULES FILES
 		CLI.cppm
+		UCI.cppm
 )
 
 target_link_libraries(chess
