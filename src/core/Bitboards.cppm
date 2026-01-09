@@ -21,7 +21,7 @@ export namespace Bitwise{
 
 	template<std::integral T>
 	constexpr int lsb(T bits) {
-		return _tzcnt_u64(bits);
+		return static_cast<int>(_tzcnt_u64(bits));
 	}
 
 	template<std::integral T>
