@@ -41,17 +41,17 @@ export namespace Sort {
             if (move.is_en_passant()) victim = 1; // Pawn
 
             // MVV_LVA gives a score between 10 and 55
-            score += 10000 + MVV_LVA[victim][attacker];
+            score += 10'000 + MVV_LVA[victim][attacker];
         }
 
 		//  Promotion bonus
         if (move.is_promo()) {
 			// Promote to queen is best
             if (move.promotion_type() == Types::PieceType::QUEEN) {
-                score += 10000;
+                score += 11'000;
             }
             else {
-                score += 1000; // Under-promotions are less interesting
+                score += 1'000; // Under-promotions are less interesting
             }
         }
 
@@ -73,14 +73,27 @@ export namespace Sort {
 
     class MovePicker {
     public:
-        MovePicker(MoveGen::MoveList& list, const Position::Position& pos, Move tt_move = Move{}) : list(list) {
+        using HistoryTable = int[2][64][64];
+        MovePicker(MoveGen::MoveList& list, const Position::Position& pos, 
+            const HistoryTable& history, const std::array<Move, 2>& killers = {}, Move tt_move = Move{}) : list(list) {
             for (int i = 0; i < list.size(); ++i) {
                 // If it's the move from the TT, give it a massive bonus to ensure it's first
-                if (list[i] == tt_move) {
-                    scores[i] = 1000000;
+                Move move = list[i];
+                if (move == tt_move) {
+                    scores[i] = 1'000'000; // Best: TT Move 
+                }
+                else if (move == killers[0]) {
+                    scores[i] = 9'000; // Priority Quiet 1
+                }
+                else if (move == killers[1]) {
+                    scores[i] = 8'000; // Priority Quiet 2
+                }
+                else if (!move.is_capture() && !move.is_promo()) {
+                    scores[i] = score_move(move, pos); // Standard: PST moves 
+                    scores[i] += std::min(8000, history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()]);
                 }
                 else {
-                    scores[i] = score_move(list[i], pos);
+                    scores[i] = score_move(move, pos); // Standard: PST moves 
                 }
             }
         }
@@ -120,14 +133,15 @@ export namespace Sort {
 export namespace Search {
     using namespace Types;
     using TranspositionTable::TTEntry;
+    using HistoryTable = int[2][64][64];
     TranspositionTable::TranspositionTable tt(64);
 
-    constexpr int NO_TT_CUTOFF = 1000000;
-
-    // Safety check: Don't use standard INT_MAX to avoid overflows
-    constexpr int INF = 32001;
-    constexpr int MATE_VAL = 32000;
+    constexpr int NO_TT_CUTOFF = 1'000'000;
+    constexpr int INF = 32'001;
+    constexpr int MATE_VAL = 32'000;
     constexpr int MAX_PLY = 64;
+    constexpr int MAX_HISTORY = 16'384;
+    constexpr int HISTORY_GRAVITY = 256;
 
     class Searcher {
     private:
@@ -136,6 +150,11 @@ export namespace Search {
         int best_score_root{};
         ui64 nodes_visited{};
         int max_sel_depth{};
+        double max_time_ms{ 15'000.0 }; // 15s
+        bool time_up = false;
+        std::chrono::steady_clock::time_point search_start;
+		Move killer[2][MAX_PLY] = {};
+        HistoryTable history = {};
 
         int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
             TTEntry* entry = tt.probe(zobrist);
@@ -143,13 +162,22 @@ export namespace Search {
 
             tt_move = entry->move;
             if (entry->depth >= depth) {
+
                 int tt_score = tt.score_from_tt(entry->score, ply);
+
                 if (entry->type == TranspositionTable::EXACT) return tt_score;
                 if (entry->type == TranspositionTable::LOWER_BOUND) alpha = std::max(alpha, tt_score);
                 if (entry->type == TranspositionTable::UPPER_BOUND) beta = std::min(beta, tt_score);
                 if (alpha >= beta) return tt_score;
             }
             return NO_TT_CUTOFF;
+        }
+
+        void update_history(const Move& move, int depth, Color side, int bonus) {
+            int delta = std::clamp(bonus, -MAX_HISTORY, MAX_HISTORY);
+            int& val = history[static_cast<int>(side) - 1][move.from()][move.to()];
+            val += delta - (val * std::abs(delta)) / HISTORY_GRAVITY;
+            val = std::clamp(val, -MAX_HISTORY, MAX_HISTORY);
         }
 
         //Quiescence Search
@@ -176,7 +204,7 @@ export namespace Search {
             }
 
             MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures(pos);
-            Sort::MovePicker picker(list, pos);
+            Sort::MovePicker picker(list, pos, history);
             Move move;
             int legal_moves = 0;
 
@@ -202,6 +230,7 @@ export namespace Search {
             if (pos.is_draw()) return 0;
             if (ply >= 64) return pos.evaluate(); // Safety cutoff
 
+            int alpha_orig = alpha;
             // 2. Transposition Table
             Move tt_move = NO_MOVE;
             int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
@@ -213,18 +242,24 @@ export namespace Search {
             nodes_visited++;
             bool in_check = pos.is_in_check(pos.turn());
 
+            
             // 4. Null Move Pruning          
-            if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+            if (allowed_null && depth >= 4 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+                int R = (depth > 6 ? 3 : 2);
                 pos.make_null_move();
                 // Search with reduced depth and zero window (beta-1, beta)
-                int score = -negamax(pos, depth - 3, ply + 1, -beta, -beta + 1, false);
+                int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -beta + 1, false);
                 pos.undo_null_move();
-                if (score >= beta) return beta; // Cutoff
-            }
 
+                if (score >= beta && depth <= 8 ) score = -negamax(pos, depth - 1, ply + 1, -beta, -beta + 1, false);
+                
+                if (score >= beta ) return beta; // Cutoff
+            }
+            
             // 5. Move Generation
+            std::array<Move, 2> ply_killers = { killer[0][ply], killer[1][ply] };
             MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
-            Sort::MovePicker picker(list, pos, tt_move);
+            Sort::MovePicker picker(list, pos, history, ply_killers, tt_move);
             Move move;
 
             int legal_moves = 0;
@@ -245,11 +280,32 @@ export namespace Search {
                     score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                 }
                 else {
+                    int reduction = 0;
+
+                    if (depth >= 3 && !in_check && legal_moves >= 4) {
+                        // Base reduction
+                        reduction = 1;
+
+                        // Deeper reductions for late moves
+                        if (depth >= 5 && legal_moves >= 8)  reduction += 1;
+                        if (depth >= 8 && legal_moves >= 12) reduction += 1;
+
+                        // Reduce more if history is low (bad move)
+                        if (!move.is_capture() && !move.is_promo()) {
+                            int hist = history[static_cast<int>(pos.turn())-1][move.from()][move.to()];
+                            if (hist < 0)         reduction += 1;
+                            if (hist < -4000)     reduction += 1;  // optional
+                        }
+
+                        // Never reduce too much
+                        reduction = std::min(reduction, depth - 2);
+                    }
+
                     // Late moves: Zero Window Search
-                    score = -negamax(pos, depth - 1, ply + 1, -alpha - 1, -alpha, true);
+                    score = -negamax(pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, true);
 
                     // If the move beat alpha, we must re-search with full window
-                    if (score > alpha && score < beta) {
+                    if (score > alpha) {
                         score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                     }
                 }
@@ -266,7 +322,24 @@ export namespace Search {
                     alpha = score;
                 }
 
-                if (alpha >= beta) break; // Beta Cutoff
+                if (score >= beta) { // Beta Cutoff
+                    // Only store quiet moves as killers
+                    if (!move.is_capture() && !move.is_promo()) {
+                        int bonus = 200 * depth + 50 * depth * depth;
+                        update_history(move, depth, pos.turn(), bonus);
+                        killer[1][ply] = killer[0][ply];
+                        killer[0][ply] = move;
+                    }
+                    using TranspositionTable::NodeType;
+                    NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
+                        (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
+                    tt.store(pos.get_zobrist_key(), depth, tt.score_to_tt(best_score, ply), best_move, bound, ply);
+                    return beta;
+                }
+                else if (!move.is_capture() && !move.is_promo()) {
+                    int malus = std::max(-32 * depth * depth, -1200);
+                    update_history(move, depth, pos.turn(), malus);
+                }
             }
 
             // 7. Checkmate / Stalemate
@@ -278,39 +351,98 @@ export namespace Search {
             using TranspositionTable::NodeType;
             NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                 (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-
             tt.store(pos.get_zobrist_key(), depth, tt.score_to_tt(best_score, ply), best_move, bound, ply);
 
             return best_score;
         }
 
     public:
-        Move start_search(Position::Position& pos, int target_depth) {
+        void set_max_time(double seconds) {
+            max_time_ms = seconds * 1000.0;
+        }
+
+        bool should_stop() {
+            if (time_up) return true;
+
+            double elapsed_ms = time_elapsed_ms(search_start);
+
+            if (elapsed_ms >= max_time_ms) {
+                time_up = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        inline double time_elapsed_ms(std::chrono::steady_clock::time_point start)
+        {
+            auto now = std::chrono::steady_clock::now();
+            return std::chrono::duration<double, std::milli>(now - start).count();
+        }
+
+        Move start_search(Position::Position& pos, int target_depth = 64, double max_time_sec = 15.0)
+        {
             best_move_root = NO_MOVE;
             nodes_visited = 0;
             max_sel_depth = 0;
+            time_up = false;
+            tt.new_search();
+            const auto start_time = std::chrono::steady_clock::now();
+            search_start = start_time;  // for should_stop() consistency
 
-            auto start_time = std::chrono::high_resolution_clock::now();
+            const double max_time_ms = max_time_sec * 1000.0;
+            const double soft_limit_ms = max_time_ms * 0.85;  // tuneable: 0.6–0.85
 
-            for (int depth = 1; depth <= target_depth; ++depth) {
+            Move best_so_far = NO_MOVE;
+            int best_score_so_far = -INF;
+
+            for (int depth = 1; depth <= target_depth; ++depth)
+            {
+                // Early exit before starting expensive iteration
+                if (time_elapsed_ms(start_time) >= soft_limit_ms && depth > 1) break;
+
+                if (should_stop()) break;
+
                 int score = negamax(pos, depth, 0, -INF, INF, true);
 
-                auto current_time = std::chrono::high_resolution_clock::now();
-                auto duration = current_time - start_time;
-                double seconds = std::chrono::duration<double>(duration).count();
-                uint64_t nps = (seconds > 0.001) ? static_cast<uint64_t>(nodes_visited / seconds) : 0;
 
+
+                // Only accept completed iteration results
+                if (best_move_root != NO_MOVE)
+                {
+                    best_so_far = best_move_root;
+                    best_score_so_far = score;
+                }
+
+                // Calculate stats
+                const auto current_time = std::chrono::steady_clock::now();
+                const double elapsed_sec = std::chrono::duration<double>(current_time - start_time).count();
+                const uint64_t nps = (elapsed_sec > 0.001)
+                    ? static_cast<uint64_t>(nodes_visited / elapsed_sec)
+                    : 0;
+
+                // Format score for UCI (mate / cp)
                 std::string score_str;
-                if (score > MATE_VAL - 100) score_str = "mate " + std::to_string((MATE_VAL - score + 1) / 2);
-                else if (score < -MATE_VAL + 100) score_str = "mate -" + std::to_string((MATE_VAL + score) / 2);
-                else score_str = "cp " + std::to_string(score);
+                score_str = "cp " + std::to_string(score);
 
-                std::cout << std::format("info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}\n",
-                    depth, max_sel_depth, score_str, nodes_visited, nps, static_cast<int>(seconds * 1000),
-                    (best_move_root != NO_MOVE ? Types::move_to_string(best_move_root) : "none"))
-                    << std::flush;
+                // UCI info line
+                std::cout << std::format(
+                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}\n",
+                    depth,
+                    max_sel_depth,
+                    score_str,
+                    nodes_visited,
+                    nps,
+                    static_cast<int>(elapsed_sec * 1000),
+                    (best_so_far != NO_MOVE ? Types::move_to_string(best_so_far) : "none")
+                ) << std::flush;
+
+                // If time ran out during search we still have previous best move
+                if (should_stop()) break;
+
             }
-            return best_move_root;
+
+            return best_so_far;
         }
     };
 }
