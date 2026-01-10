@@ -13,6 +13,9 @@ import Perft;
 import Search;
 
 export namespace CLI {
+	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+	constexpr const char* test = "8/8/8/8/8/8/ppp5/K6k b - - 0 1";
+
 	enum class OpType{
 		PLAY,
 		PRINT,
@@ -89,7 +92,10 @@ export namespace CLI {
 		Zobrist::init();
 		Search::Searcher searcher;
 		Position::Position pos;
-		pos.init_start_pos();
+		if (!pos.set_fen(startpos)) {
+			std::cerr << "Error laoding fen\n";
+			return;
+		}
 		pos.print(std::cout);
 		bool playing{ true };
 		OpType operation{OpType::NONE};
