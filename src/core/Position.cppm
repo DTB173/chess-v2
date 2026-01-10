@@ -243,17 +243,23 @@ export namespace Position {
         }
 
         bool is_draw() const {
-            // 1. 50-move rule (100 half-moves)
-            if (metadata.get_clock() >= 100) return true;
+            // 1. Fifty-move rule
+            if (metadata.get_clock() >= 100) {
+                return true;
+            }
 
-            // 2. Repetition (Check back through history)
-            // We only need to check back as far as the half_move_clock allows
-            int stop = (history_idx > metadata.get_clock()) ? static_cast<int>(history_idx - metadata.get_clock()) : 0;
+            // 2. Threefold repetition
+            int count = 1;  // current position counts as 1
 
-            // We only check every 2nd move (our previous turns)
-            for (int i = history_idx - 2; i >= stop; i -= 2) {
+            // Check backwards, but only as far as the 50-move counter allows
+            int start = std::max(0, static_cast<int>(history_idx - metadata.get_clock()));
+
+            for (int i = history_idx - 1; i >= start; --i) {
                 if (history[i].prev_zobrist == zobrist_key) {
-                    return true;
+                    ++count;
+                    if (count >= 3) {
+                        return true;
+                    }
                 }
             }
 
@@ -499,9 +505,14 @@ export namespace Position {
         // NPM helpers
         void make_null_move() {
             history[history_idx++] = { zobrist_key, Move{}, Piece(), metadata };
-            metadata.toggle_turn();
+
+            if (metadata.en_passant_square() != Square::SQ_NONE) {
+                zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
+                metadata.clear_en_passant();
+            }
+
             zobrist_key ^= Zobrist::side;
-            metadata.clear_en_passant();
+            metadata.toggle_turn();
         }
         void undo_null_move() {
             StateRecord prev = history[--history_idx];
