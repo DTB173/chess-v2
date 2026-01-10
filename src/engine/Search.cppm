@@ -134,7 +134,7 @@ export namespace Search {
     using namespace Types;
     using TranspositionTable::TTEntry;
     using HistoryTable = int[2][64][64];
-    TranspositionTable::TranspositionTable tt(64);
+    TranspositionTable::TranspositionTable tt(64); // 64 Mb tt
 
     constexpr int NO_TT_CUTOFF = 1'000'000;
     constexpr int INF = 32'001;
@@ -145,17 +145,47 @@ export namespace Search {
 
     class Searcher {
     private:
-        int max_depth{};
-        Types::Move best_move_root{};
-        int best_score_root{};
         ui64 nodes_visited{};
-        int max_sel_depth{};
-        double max_time_ms{ 15'000.0 }; // 15s
-        bool time_up = false;
+        double max_time_ms{ 15'000.0 };
         std::chrono::steady_clock::time_point search_start;
-		Move killer[2][MAX_PLY] = {};
+
+        int max_depth{};
+        int best_score_root{};
+        int max_sel_depth{};
+
+        Types::Move best_move_root{};
+        bool time_up = false;
+
+        Move killer[2][MAX_PLY] = {};
         HistoryTable history = {};
 
+        std::ostream& print_pv(std::ostream& out, Position::Position& pos) {
+            int count = 0;
+            Move pv_moves[24];
+
+            while (count < 24) {
+                ui64 key = pos.get_zobrist_key();
+                TTEntry* entry = tt.probe(key);
+
+                if (!entry || entry->move == NO_MOVE) break;
+
+
+                if (!pos.is_legal(entry->move)) break;
+
+                out << move_to_string(entry->move) << ' ';
+
+                pv_moves[count] = entry->move;
+                pos.make_move(entry->move);
+                count++;
+            }
+
+            for (int i = 0; i < count; i++) {
+                pos.undo_move();
+            }
+
+            return out;
+        }
+        
         int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
             TTEntry* entry = tt.probe(zobrist);
             if (!entry) return NO_TT_CUTOFF;
@@ -218,7 +248,7 @@ export namespace Search {
                 if (score > alpha) alpha = score;
             }
 
-            // Checkmate detection in Q-Search
+            // Checkmate detection
             if (in_check && legal_moves == 0) return -MATE_VAL + ply;
 
             return alpha;
@@ -333,7 +363,7 @@ export namespace Search {
                     using TranspositionTable::NodeType;
                     NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                         (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-                    tt.store(pos.get_zobrist_key(), depth, tt.score_to_tt(best_score, ply), best_move, bound, ply);
+                    tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply);
                     return beta;
                 }
                 else if (!move.is_capture() && !move.is_promo()) {
@@ -351,7 +381,7 @@ export namespace Search {
             using TranspositionTable::NodeType;
             NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                 (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-            tt.store(pos.get_zobrist_key(), depth, tt.score_to_tt(best_score, ply), best_move, bound, ply);
+            tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply);
 
             return best_score;
         }
@@ -386,7 +416,6 @@ export namespace Search {
             nodes_visited = 0;
             max_sel_depth = 0;
             time_up = false;
-            tt.new_search();
             const auto start_time = std::chrono::steady_clock::now();
             search_start = start_time;  // for should_stop() consistency
 
@@ -423,19 +452,25 @@ export namespace Search {
 
                 // Format score for UCI (mate / cp)
                 std::string score_str;
-                score_str = "cp " + std::to_string(score);
+                if (std::abs(score) >= MATE_VAL - 100) {
+                    int dist = (MATE_VAL - std::abs(score) + 1) / 2;
+                    score_str = std::string("mate ") + (score > 0 ? "" : "-") + std::to_string(dist);
+                }
+                else {
+                    score_str = "cp " + std::to_string(score);
+                }
 
                 // UCI info line
                 std::cout << std::format(
-                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}\n",
+                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv ",
                     depth,
                     max_sel_depth,
                     score_str,
                     nodes_visited,
                     nps,
-                    static_cast<int>(elapsed_sec * 1000),
-                    (best_so_far != NO_MOVE ? Types::move_to_string(best_so_far) : "none")
-                ) << std::flush;
+                    static_cast<int>(elapsed_sec * 1000)
+                );
+                print_pv(std::cout, pos) << '\n' << std::flush;
 
                 // If time ran out during search we still have previous best move
                 if (should_stop()) break;
