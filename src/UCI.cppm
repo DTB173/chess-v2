@@ -2,6 +2,7 @@ module;
 #include <string>
 #include <iostream>
 #include <sstream>
+#include <format>
 export module UCI;
 import Position;
 import Types;
@@ -130,19 +131,60 @@ export namespace UCI {
 				break;
 			case OpType::NEWGAME:
 				Search::tt.clear();
-
 				break;
 			case OpType::POSITION: handle_position(input, pos); break;
 			case OpType::GO: {
-				int depth = 12;
-				// Parse depth if provided
-				if (auto depth_pos = input.find("depth "); depth_pos != std::string::npos) {
-					depth = std::stoi(input.substr(depth_pos + 6));
+				int max_depth = 64;
+				int movetime_ms = -1; // Change to -1
+				int wtime = -1, btime = -1, winc = 0, binc = 0;
+				int movestogo = -1;
+				// 1. Parse all potential arguments
+				std::stringstream ss(input);
+				std::string token;
+				while (ss >> token) {
+					if (token == "depth") ss >> max_depth;
+					else if (token == "movetime") ss >> movetime_ms;
+					else if (token == "wtime") ss >> wtime;
+					else if (token == "btime") ss >> btime;
+					else if (token == "winc") ss >> winc;
+					else if (token == "binc") ss >> binc;
+					else if (token == "movestogo") ss >> movestogo;
 				}
-				Types::Move best_move = searcher.start_search(pos, depth);
-				std::cout << "bestmove " << Types::move_to_string(best_move) << "\n";
-				break;
-			}
+
+				int time_for_move_ms = 0;
+
+				// 2. Decide how much time to use
+				if (movetime_ms != -1) {
+					// If GUI says "movetime", we must use exactly that (minus buffer)
+					time_for_move_ms = movetime_ms - 50;
+				}
+				else if (wtime != -1 || btime != -1) {
+					bool is_white = pos.turn() == Types::Color::WHITE;
+					int time_left = is_white ? wtime : btime;
+					int inc = is_white ? winc : binc;
+
+					int divisor;
+					if (movestogo != -1) {
+						divisor = movestogo + 1;
+					}
+					else {
+						divisor = 30;
+					}
+					// Subtract a 50ms "Safety Buffer" for network/OS lag
+					time_for_move_ms = (time_left / divisor) + (inc * 0.8) - 50;
+				}
+				else {
+					// Fallback for "go" with no arguments (e.g. 2 seconds)
+					time_for_move_ms = 2000;
+				}
+
+				time_for_move_ms = std::max(20, time_for_move_ms);
+
+				std::cout << "info string allocated " << time_for_move_ms << "ms" << std::endl;
+
+				Types::Move best_move = searcher.start_search(pos, max_depth, time_for_move_ms / 1000.0);
+				std::cout << "bestmove " << Types::move_to_string(best_move) << std::endl;
+			} break;
 			case OpType::QUIT:play = false; break;
 			}
 		}
