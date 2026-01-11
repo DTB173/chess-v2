@@ -62,6 +62,10 @@ export namespace Types {
         void operator+=(const Score& other) { mg += other.mg; eg += other.eg; }
         void operator-=(const Score& other) { mg -= other.mg; eg -= other.eg; }
         Score operator*(int factor) { return { mg * factor, eg * factor }; }
+        Score operator-(const Score& other) { return Score{ mg - other.mg, eg - other.eg }; }
+        inline int eval(int phase) const {
+            return (mg * phase + eg * (24 - phase)) / 24;
+        }
     };
 
     struct Piece {
