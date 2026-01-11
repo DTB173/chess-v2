@@ -13,6 +13,8 @@ import Types;
 import MoveGen;
 import PSQTables;
 import TranspositionTable;
+import See;
+import Evaluation;
 
 export namespace Sort {
 	using namespace Types;
@@ -31,42 +33,48 @@ export namespace Sort {
         int score = 0;
 
         const auto& mailbox = pos.get_mailbox();
-        Piece moving_piece = mailbox[move.from()];
+        Piece moving_piece = pos.get_mailbox()[move.from()];
+        PieceType pt = moving_piece.type();
+
+        //  Promotion bonus
+        if (move.is_promo()) {
+            int promo_score = (move.promotion_type() == PieceType::QUEEN) ? 120000 : 20000;
+            if (move.is_capture()) promo_score += 10000;
+            return promo_score;
+        }
 
         // Capture bonus
         if (move.is_capture()) {
-            int victim = static_cast<int>(mailbox[move.to()].type());
-            int attacker = static_cast<int>(mailbox[move.from()].type());
+            PieceType victim_pt = mailbox[move.to()].type();
+            if (move.is_en_passant()) victim_pt = PieceType::PAWN;
 
-            if (move.is_en_passant()) victim = 1; // Pawn
+            int victim_val = PSQTables::get_material_value(victim_pt);
+            int attacker_val = PSQTables::get_material_value(pt);
 
-            // MVV_LVA gives a score between 10 and 55
-            score += 10'000 + MVV_LVA[victim][attacker];
-        }
-
-		//  Promotion bonus
-        if (move.is_promo()) {
-			// Promote to queen is best
-            if (move.promotion_type() == Types::PieceType::QUEEN) {
-                score += 11'000;
+            // Good/Equal Captures (MVV-LVA)
+            if (victim_val >= attacker_val) {
+                return 80000 + MVV_LVA[static_cast<int>(victim_pt)][static_cast<int>(pt)];
             }
-            else {
-                score += 1'000; // Under-promotions are less interesting
+
+            // Risky Captures (SEE)
+            int see_val = See::see(pos, move);
+            if (see_val >= 0) {
+                return 80000 + see_val;
             }
+
+            // Bad Captures (Losing material)
+            // These will be searched AFTER good quiet moves.
+            return -10000 + see_val;
         }
 
-        if (!move.is_capture() && !move.is_promo()) {
-            // We use Midgame tables for sorting usually
-            // Flip the square for Black to match White-relative tables
-            int from_idx = (moving_piece.color() == Types::Color::WHITE) ? move.from() : (move.from() ^ 56);
-            int to_idx = (moving_piece.color() == Types::Color::WHITE) ? move.to() : (move.to() ^ 56);
 
-            // Bonus = Value of new square - Value of old square
-            int pst_diff = PSQTables::PSQ_TABLES[static_cast<int>(moving_piece.type()) - 1][to_idx].mg
-                            - PSQTables::PSQ_TABLES[static_cast<int>(moving_piece.type()) - 1][from_idx].mg;
+        int phase = pos.get_phase();
 
-            score += pst_diff;
-        }
+        Score s_from = PSQTables::get_piece_value(pt, moving_piece.color(), move.from());
+        Score s_to = PSQTables::get_piece_value(pt, moving_piece.color(), move.to());
+        score += (s_to - s_from).eval(phase);
+
+        if (move.is_castling()) score += 8000;
 
         return score;
     }
@@ -134,7 +142,7 @@ export namespace Search {
     using namespace Types;
     using TranspositionTable::TTEntry;
     using HistoryTable = int[2][64][64];
-    TranspositionTable::TranspositionTable tt(64); // 64 Mb tt
+    TranspositionTable::TT tt(64); // 64 Mb tt
 
     constexpr int NO_TT_CUTOFF = 1'000'000;
     constexpr int INF = 32'001;
@@ -154,6 +162,7 @@ export namespace Search {
         int max_sel_depth{};
 
         Types::Move best_move_root{};
+        ui8 current_age = 0;
         bool time_up = false;
 
         Move killer[2][MAX_PLY] = {};
@@ -212,14 +221,21 @@ export namespace Search {
 
         //Quiescence Search
         int quiescence(Position::Position& pos, int alpha, int beta, int ply) {
+ 
+            check_time();
+            if (time_up)return 0;
             nodes_visited++;
             if (pos.is_draw()) return 0;
             if (ply > max_sel_depth) max_sel_depth = ply;
 
+            int eval = Eval::evaluate(pos, tt, current_age);
+            if (pos.turn() == Color::BLACK) {
+                eval = -eval;
+            }
             // Safety: limit QS depth
-            if (ply >= MAX_PLY) return pos.evaluate();
+            if (ply >= MAX_PLY) return eval;
 
-            int standing_pat = pos.evaluate();
+            int standing_pat = eval;
             if (ply >= MAX_PLY) return standing_pat;
 
             bool in_check = pos.is_in_check(pos.turn());
@@ -240,10 +256,20 @@ export namespace Search {
 
             while ((move = picker.next_legal(pos)) != NO_MOVE) {
                 legal_moves++;
+                if ((nodes_visited & 127) == 0) { // check time every 128 nodes
+                    if (should_stop()) {
+                        time_up = true;
+                        return 0; // return last known evaluation
+                    }
+                }
+                if (See::see(pos, move) < -50) {
+                    continue;
+                }
                 pos.make_move(move);
                 int score = -quiescence(pos, -beta, -alpha, ply + 1);
                 pos.undo_move();
 
+                if (time_up) return 0;
                 if (score >= beta) return beta;
                 if (score > alpha) alpha = score;
             }
@@ -257,8 +283,18 @@ export namespace Search {
         // Main Negamax Search
         int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
             // 1. Terminal / Draw checks
+            nodes_visited++;
+            if ((nodes_visited & 2047) == 0) {
+                if (should_stop()) time_up = true;
+            }
+
+            if (time_up) return 0;
             if (pos.is_draw()) return 0;
-            if (ply >= 64) return pos.evaluate(); // Safety cutoff
+            int static_eval = Eval::evaluate(pos, tt, current_age);
+            if (pos.turn() == Color::BLACK) {
+                static_eval = -static_eval;
+            }
+            if (ply >= 64) return static_eval; // Safety cutoff
 
             int alpha_orig = alpha;
             // 2. Transposition Table
@@ -285,7 +321,6 @@ export namespace Search {
                 
                 if (score >= beta ) return beta; // Cutoff
             }
-            
             // 5. Move Generation
             std::array<Move, 2> ply_killers = { killer[0][ply], killer[1][ply] };
             MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
@@ -300,6 +335,13 @@ export namespace Search {
             // 6. Loop
             while ((move = picker.next_legal(pos)) != NO_MOVE) {
                 legal_moves++;
+
+                if ((nodes_visited & 127) == 0) { // check time every 128 nodes
+                    if (should_stop()) {
+                        time_up = true;
+                        return 0; // return last known evaluation
+                    }
+                }
                 pos.make_move(move);
 
                 int score;
@@ -342,6 +384,7 @@ export namespace Search {
 
                 pos.undo_move();
 
+                if (time_up) return 0;
                 if (score > best_score) {
                     best_score = score;
                     best_move = move;
@@ -352,7 +395,7 @@ export namespace Search {
                     alpha = score;
                 }
 
-                if (score >= beta) { // Beta Cutoff
+                if (score >= beta && !time_up) { // Beta Cutoff
                     // Only store quiet moves as killers
                     if (!move.is_capture() && !move.is_promo()) {
                         int bonus = 200 * depth + 50 * depth * depth;
@@ -363,7 +406,7 @@ export namespace Search {
                     using TranspositionTable::NodeType;
                     NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                         (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-                    tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply);
+                    tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age ,static_eval);
                     return beta;
                 }
                 else if (!move.is_capture() && !move.is_promo()) {
@@ -378,14 +421,24 @@ export namespace Search {
             }
 
             // 8. TT Store
-            using TranspositionTable::NodeType;
-            NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
-                (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-            tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply);
+            if (!time_up) {
+                using TranspositionTable::NodeType;
+                NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
+                    (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
+                tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age, static_eval);
+            }
+
 
             return best_score;
         }
 
+        void check_time() {
+            if ((nodes_visited & 1023) == 0) {
+                if (should_stop()) {
+                    time_up = true;
+                }
+            }
+        }
     public:
         void set_max_time(double seconds) {
             max_time_ms = seconds * 1000.0;
@@ -395,8 +448,9 @@ export namespace Search {
             if (time_up) return true;
 
             double elapsed_ms = time_elapsed_ms(search_start);
+            constexpr int overhead = 50; // 30 ms buffer
 
-            if (elapsed_ms >= max_time_ms) {
+            if (elapsed_ms >= (max_time_ms - overhead)) {
                 time_up = true;
                 return true;
             }
@@ -410,31 +464,47 @@ export namespace Search {
             return std::chrono::duration<double, std::milli>(now - start).count();
         }
 
+
+
         Move start_search(Position::Position& pos, int target_depth = 64, double max_time_sec = 15.0)
         {
             best_move_root = NO_MOVE;
             nodes_visited = 0;
             max_sel_depth = 0;
+            current_age++;
             time_up = false;
-            const auto start_time = std::chrono::steady_clock::now();
-            search_start = start_time;  // for should_stop() consistency
 
-            const double max_time_ms = max_time_sec * 1000.0;
-            const double soft_limit_ms = max_time_ms * 0.85;  // tuneable: 0.6–0.85
+            max_time_ms = max_time_sec * 1000.0;
+            search_start = std::chrono::steady_clock::now();
+            time_up = false;
+
+            const double soft_limit_ms = max_time_ms * 0.85;
 
             Move best_so_far = NO_MOVE;
             int best_score_so_far = -INF;
 
+            int alpha = -INF;
+            int beta = +INF;
+            int window = 40;
+
             for (int depth = 1; depth <= target_depth; ++depth)
             {
                 // Early exit before starting expensive iteration
-                if (time_elapsed_ms(start_time) >= soft_limit_ms && depth > 1) break;
+                if ((time_elapsed_ms(search_start) >= soft_limit_ms) && depth > 1) break;
 
-                if (should_stop()) break;
+                int score = negamax(pos, depth, 0, alpha, beta, true);
 
-                int score = negamax(pos, depth, 0, -INF, INF, true);
+                if (score <= alpha || score >= beta) {
+                    alpha = -INF;
+                    beta = +INF;
+                    score = negamax(pos, depth, 0, alpha, beta, true);
+                    if (time_up) break;
+                }
 
+                alpha = score - window;
+                beta = score + window;
 
+                if (time_up) break;
 
                 // Only accept completed iteration results
                 if (best_move_root != NO_MOVE)
@@ -445,7 +515,7 @@ export namespace Search {
 
                 // Calculate stats
                 const auto current_time = std::chrono::steady_clock::now();
-                const double elapsed_sec = std::chrono::duration<double>(current_time - start_time).count();
+                const double elapsed_sec = std::chrono::duration<double>(current_time - search_start).count();
                 const uint64_t nps = (elapsed_sec > 0.001)
                     ? static_cast<uint64_t>(nodes_visited / elapsed_sec)
                     : 0;
@@ -476,7 +546,6 @@ export namespace Search {
                 if (should_stop()) break;
 
             }
-
             return best_so_far;
         }
     };
