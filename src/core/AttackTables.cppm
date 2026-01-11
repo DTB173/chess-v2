@@ -10,6 +10,7 @@ import Magics;
 export namespace AttackTables {
 	using Types::ui64;
 	using Types::Color;
+	using Types::Square;
 
 	constexpr ui64 NOT_A_FILE = 0xFEFEFEFEFEFEFEFEULL;
 	constexpr ui64 NOT_H_FILE = 0x7F7F7F7F7F7F7F7FULL;
@@ -102,10 +103,10 @@ export namespace AttackTables {
 	constexpr inline auto white_pawn_table = make_wpawn_array();
 	constexpr inline auto black_pawn_table = make_bpawn_array();
 
-	constexpr ui64 get_knight_attacks(ui64 idx) { return knight_table[idx]; }
-	constexpr ui64 get_king_attacks(ui64 idx) { return king_table[idx]; }
-	constexpr ui64 get_pawn_attacks(ui64 idx, Color c) { return c == Color::WHITE ? white_pawn_table[idx] : black_pawn_table[idx]; }
-	ui64 get_pawn_moves_and_attacks(int sq, Color us, ui64 total_occ, ui64 enemy_occ, int ep_file) {
+	constexpr ui64 get_knight_attacks(int idx) { return knight_table[idx]; }
+	constexpr ui64 get_king_attacks(int idx) { return king_table[idx]; }
+	constexpr ui64 get_pawn_attacks(int idx, Color c) { return c == Color::WHITE ? white_pawn_table[idx] : black_pawn_table[idx]; }
+	constexpr ui64 get_pawn_moves_and_attacks(int sq, Color us, ui64 total_occ, ui64 enemy_occ, int ep_file) {
 		ui64 moves = 0;
 		ui64 bit = (1ULL << sq);
 
@@ -146,24 +147,24 @@ export namespace AttackTables {
 
 		return moves;
 	}
-	inline uint64_t get_rook_attacks(int sq, uint64_t occupancy) {
+	constexpr inline ui64 get_rook_attacks(int sq, ui64 occupancy) {
 		using namespace Magics;
 		uint64_t relevant = occupancy & rook_masks[sq];
 		uint64_t hash = relevant * rook_magics[sq];
 		uint32_t index = rook_offsets[sq] + static_cast<uint32_t>(hash >> rook_shifts[sq]);
 		return rook_attacks_table[index];
 	}
-	inline uint64_t get_bishop_attacks(int sq, uint64_t occupancy) {
+	constexpr inline ui64 get_bishop_attacks(int sq, ui64 occupancy) {
 		using namespace Magics;
 		uint64_t relevant = occupancy & bishop_masks[sq];
 		uint64_t hash = relevant * bishop_magics[sq];
 		uint32_t index = bishop_offsets[sq] + static_cast<uint32_t>(hash >> bishop_shifts[sq]);
 		return bishop_attacks_table[index];
 	}
-	inline uint64_t get_queen_attacks(int sq, uint64_t occupancy) {
+	constexpr inline ui64 get_queen_attacks(int sq, ui64 occupancy) {
 		return get_rook_attacks(sq, occupancy) | get_bishop_attacks(sq, occupancy);
 	}
-
+	
 	void verify_magic_attacks() {
 		using namespace Magics;
 		std::mt19937_64 rng(42);  // fixed seed for reproducibility
