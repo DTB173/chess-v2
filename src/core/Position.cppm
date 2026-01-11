@@ -186,6 +186,7 @@ export namespace Position {
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
 		inline Color turn() const { return metadata.side_to_move(); }
+        inline int get_phase()const { return current_phase; }
         inline Square get_king_square(Color c) const { 
             return king_sq[static_cast<int>(c) - 1];
         }
@@ -197,6 +198,7 @@ export namespace Position {
 		inline ui64 get_occupancy(Color c) const {
             return occupancy[static_cast<int>(c) - 1];
 		}
+        inline ui64 get_total_occupancy()const { return total_pieces; }
 
         inline bool is_legal(Move m) {
             Color us = turn(); // get 'us' before, make_move toogles turn
@@ -236,10 +238,10 @@ export namespace Position {
             int phase = std::clamp(current_phase, 0, 24);
 
             // 2. Linear interpolation (Tapering)
-            int score = (current_score.mg * phase + current_score.eg * (24 - phase)) / 24;
+            int score = current_score.eval(phase);
 
             // 3. Return relative to side to move (standard for alpha-beta)
-            return (metadata.side_to_move() == Color::WHITE) ? score : -score;
+            return score;
         }
 
         bool is_draw() const {
@@ -664,7 +666,7 @@ export namespace Position {
 
         bool is_in_check(Color us) const {
             Square king_sqr = get_king_square(us);
-			return get_attacks_to(king_sqr, us) != 0ULL;
+			return get_attacks_to(king_sqr, total_pieces, us) != 0ULL;
         }
         bool is_square_attacked(Square sq, Color us) const {
             int them_off = (us == Color::WHITE) ? 6 : 0;
@@ -686,7 +688,7 @@ export namespace Position {
             return false;
         }
 
-        ui64 get_attacks_to(Square sq, Color us) const {
+        ui64 get_attacks_to(Square sq, ui64 blockers, Color us) const {
             const Color them = (us == Color::WHITE) ? Color::BLACK : Color::WHITE;
             ui64 attackers{};
 
@@ -699,13 +701,13 @@ export namespace Position {
                          board[bb_index(Piece(them, PieceType::KING))];
 
             // Rooks + Queens
-            ui64 rook_attacks = AttackTables::get_rook_attacks(sq, total_pieces);
+            ui64 rook_attacks = AttackTables::get_rook_attacks(sq, blockers);
             attackers |= rook_attacks &
                              (board[bb_index(Piece(them, PieceType::ROOK))] |
                               board[bb_index(Piece(them, PieceType::QUEEN))]);
 
             // Bishops + Queens
-            ui64 bishop_attacks = AttackTables::get_bishop_attacks(sq, total_pieces);
+            ui64 bishop_attacks = AttackTables::get_bishop_attacks(sq, blockers);
             attackers |= bishop_attacks &
                             (board[bb_index(Piece(them, PieceType::BISHOP))] |
                              board[bb_index(Piece(them, PieceType::QUEEN))]);
