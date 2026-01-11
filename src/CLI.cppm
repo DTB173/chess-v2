@@ -103,7 +103,7 @@ export namespace CLI {
 		int move_count = 0;
 		while (playing) {
 			if (pos.turn() == Types::Color::BLACK && operation != OpType::UNDO) {
-				Types::Move m = searcher.start_search(pos);
+				Types::Move m = searcher.start_search(pos, 64, 15);
 				std::cout << "Best move: " << Types::move_to_string(m) << '\n';
 				pos.make_move(m);
 				pos.print(std::cout);
