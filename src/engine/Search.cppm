@@ -150,6 +150,7 @@ export namespace Search {
     constexpr int MAX_PLY = 64;
     constexpr int MAX_HISTORY = 16'384;
     constexpr int HISTORY_GRAVITY = 256;
+    constexpr int QUEEN_VAL = 920;
 
     class Searcher {
     private:
@@ -221,13 +222,22 @@ export namespace Search {
 
         //Quiescence Search
         int quiescence(Position::Position& pos, int alpha, int beta, int ply) {
- 
+            
             check_time();
             if (time_up)return 0;
             nodes_visited++;
-            if (pos.is_draw()) return 0;
             if (ply > max_sel_depth) max_sel_depth = ply;
 
+            auto* entry = tt.probe(pos.get_zobrist_key());
+            if (entry && entry->depth >= 0) {  // QS depth is usually 0
+                using TranspositionTable::NodeType;
+                int tt_score = TranspositionTable::TT::score_from_tt(entry->score,ply);
+                if (entry->type == NodeType::EXACT) return tt_score;
+                if (entry->type == NodeType::LOWER_BOUND && tt_score >= beta) return tt_score;
+                if (entry->type == NodeType::UPPER_BOUND && tt_score <= alpha) return tt_score;
+            }
+
+            int old_alpha = alpha;
             int eval = Eval::evaluate(pos, tt, current_age);
             if (pos.turn() == Color::BLACK) {
                 eval = -eval;
@@ -235,11 +245,9 @@ export namespace Search {
             // Safety: limit QS depth
             if (ply >= MAX_PLY) return eval;
 
-            int standing_pat = eval;
-            if (ply >= MAX_PLY) return standing_pat;
-
             bool in_check = pos.is_in_check(pos.turn());
 
+            int standing_pat = eval;
             if (in_check) {
                 // If in check, we must ignore standing_pat and search for evasions
                 standing_pat = -INF;
@@ -249,10 +257,22 @@ export namespace Search {
                 if (standing_pat > alpha) alpha = standing_pat;
             }
 
-            MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures(pos);
+            if (!in_check && standing_pat + QUEEN_VAL< alpha) {
+                ui64 friendly_pawns = pos.get_bitboard(PieceType::PAWN, pos.turn());
+                constexpr ui64 RANK_7 = 0x00FF000000000000ULL;
+                constexpr ui64 RANK_2 = 0x000000000000FF00ULL;
+
+                ui64 pawns_near_promo = (pos.turn() == Color::WHITE)
+                    ? (friendly_pawns & RANK_7)
+                    : (friendly_pawns & RANK_2);
+                if(!pawns_near_promo) return alpha;  // futility: even best capture can't reach alpha
+            }
+
+            MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures_and_promos(pos);
             Sort::MovePicker picker(list, pos, history);
-            Move move;
-            int legal_moves = 0;
+            Move move{};
+            Move best_move{};
+            int legal_moves{};
 
             while ((move = picker.next_legal(pos)) != NO_MOVE) {
                 legal_moves++;
@@ -262,7 +282,7 @@ export namespace Search {
                         return 0; // return last known evaluation
                     }
                 }
-                if (See::see(pos, move) < -50) {
+                if (See::see(pos, move) < 0) {
                     continue;
                 }
                 pos.make_move(move);
@@ -270,34 +290,41 @@ export namespace Search {
                 pos.undo_move();
 
                 if (time_up) return 0;
-                if (score >= beta) return beta;
-                if (score > alpha) alpha = score;
+                if (score >= beta) {
+                    tt.store(pos.get_zobrist_key(), 0, beta, move, TranspositionTable::NodeType::LOWER_BOUND, ply, current_age, eval);
+                    return beta;
+                } 
+                if (score > alpha) {
+                    alpha = score;
+                    best_move = move;
+                }
             }
 
             // Checkmate detection
             if (in_check && legal_moves == 0) return -MATE_VAL + ply;
 
+            // TT store
+            using TranspositionTable::NodeType;
+            NodeType bound = (alpha <= old_alpha) ? NodeType::UPPER_BOUND :
+                (alpha >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
+            tt.store(pos.get_zobrist_key(), 0, alpha, best_move, bound, ply, current_age, eval);
             return alpha;
         }
 
         // Main Negamax Search
         int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
             // 1. Terminal / Draw checks
-            nodes_visited++;
-            if ((nodes_visited & 2047) == 0) {
+            if (ply > 0) {
+                if (pos.is_draw()) return 0;
+            }
+
+            // Check time/interrupts periodically
+            if ((nodes_visited++ & 2047) == 0) {
                 if (should_stop()) time_up = true;
             }
-
             if (time_up) return 0;
-            if (pos.is_draw()) return 0;
-            int static_eval = Eval::evaluate(pos, tt, current_age);
-            if (pos.turn() == Color::BLACK) {
-                static_eval = -static_eval;
-            }
-            if (ply >= 64) return static_eval; // Safety cutoff
 
-            int alpha_orig = alpha;
-            // 2. Transposition Table
+            // 2. Transposition Table Lookup
             Move tt_move = NO_MOVE;
             int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
             if (tt_score != NO_TT_CUTOFF && ply > 0) return tt_score;
@@ -305,21 +332,21 @@ export namespace Search {
             // 3. Quiescence at leaf
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
-            nodes_visited++;
-            bool in_check = pos.is_in_check(pos.turn());
+            // Safety cutoff
+            int static_eval = Eval::evaluate(pos, tt, current_age);
+            if (ply >= 64) return static_eval;
 
+            bool in_check = pos.is_in_check(pos.turn());
             
-            // 4. Null Move Pruning          
-            if (allowed_null && depth >= 4 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
-                int R = (depth > 6 ? 3 : 2);
+            // Note: Ensure your evaluate() handles side-to-move correctly
+
+            // 4. Null Move Pruning
+            if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+                int R = 2 + depth / 3;
                 pos.make_null_move();
-                // Search with reduced depth and zero window (beta-1, beta)
                 int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -beta + 1, false);
                 pos.undo_null_move();
-
-                if (score >= beta && depth <= 8 ) score = -negamax(pos, depth - 1, ply + 1, -beta, -beta + 1, false);
-                
-                if (score >= beta ) return beta; // Cutoff
+                if (score >= beta) return beta;
             }
             // 5. Move Generation
             std::array<Move, 2> ply_killers = { killer[0][ply], killer[1][ply] };
@@ -356,7 +383,7 @@ export namespace Search {
 
                     if (depth >= 3 && !in_check && legal_moves >= 4) {
                         // Base reduction
-                        reduction = 1;
+                        reduction = 1 + (int)(std::log(depth) * std::log(legal_moves) / 2.5);
 
                         // Deeper reductions for late moves
                         if (depth >= 5 && legal_moves >= 8)  reduction += 1;
@@ -364,9 +391,9 @@ export namespace Search {
 
                         // Reduce more if history is low (bad move)
                         if (!move.is_capture() && !move.is_promo()) {
-                            int hist = history[static_cast<int>(pos.turn())-1][move.from()][move.to()];
+                            int hist = history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()];
                             if (hist < 0)         reduction += 1;
-                            if (hist < -4000)     reduction += 1;  // optional
+                            else if (hist > 2000) reduction -= 1;
                         }
 
                         // Never reduce too much
@@ -385,33 +412,16 @@ export namespace Search {
                 pos.undo_move();
 
                 if (time_up) return 0;
+
                 if (score > best_score) {
                     best_score = score;
                     best_move = move;
                     if (ply == 0) best_move_root = move;
-                }
 
-                if (score > alpha) {
-                    alpha = score;
-                }
-
-                if (score >= beta && !time_up) { // Beta Cutoff
-                    // Only store quiet moves as killers
-                    if (!move.is_capture() && !move.is_promo()) {
-                        int bonus = 200 * depth + 50 * depth * depth;
-                        update_history(move, depth, pos.turn(), bonus);
-                        killer[1][ply] = killer[0][ply];
-                        killer[0][ply] = move;
+                    if (score > alpha) {
+                        alpha = score;
+                        if (score >= beta) break; // Beta Cutoff
                     }
-                    using TranspositionTable::NodeType;
-                    NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
-                        (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-                    tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age ,static_eval);
-                    return beta;
-                }
-                else if (!move.is_capture() && !move.is_promo()) {
-                    int malus = std::max(-32 * depth * depth, -1200);
-                    update_history(move, depth, pos.turn(), malus);
                 }
             }
 
@@ -425,9 +435,16 @@ export namespace Search {
                 using TranspositionTable::NodeType;
                 NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                     (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
-                tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age, static_eval);
-            }
 
+                tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age, static_eval);
+
+                // Update Heuristics on Cutoff
+                if (best_score >= beta && !best_move.is_capture()) {
+                    update_history(best_move, depth, pos.turn(), 200 * depth);
+                    killer[1][ply] = killer[0][ply];
+                    killer[0][ply] = best_move;
+                }
+            }
 
             return best_score;
         }
