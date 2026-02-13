@@ -78,8 +78,8 @@ export namespace MoveGen {
 			int base = is_capture ? MoveFlags::Capture : MoveFlags::Quiet;
 			list.push_back(Move(from, to, base | MoveFlags::PromoQueen));
 			list.push_back(Move(from, to, base | MoveFlags::PromoKnight));
-			list.push_back(Move(from, to, base | MoveFlags::PromoRook));
-			list.push_back(Move(from, to, base | MoveFlags::PromoBishop));
+			//list.push_back(Move(from, to, base | MoveFlags::PromoRook));
+			//list.push_back(Move(from, to, base | MoveFlags::PromoBishop));
 		}
 	}
 
@@ -238,28 +238,64 @@ export namespace MoveGen {
 		}
 	}
 
+	void generate_quiet_promotions(const Position::Position& pos, MoveList& moves) {
+		constexpr ui64 RANK_1 = 0x00000000000000FFULL; // promo black
+		constexpr ui64 RANK_8 = 0xFF00000000000000ULL; // promo white
+
+		ui64 us_pawns = pos.get_bitboard(PieceType::PAWN, pos.turn());
+		ui64 empty = ~pos.get_total_occupancy();
+
+		// For White: Shift up 8, check if empty and on 8th rank
+		if (pos.turn() == Color::WHITE) {
+			ui64 promo_pushes = (us_pawns << 8) & empty & RANK_8;
+			while (promo_pushes) {
+				int to = Bitwise::pop_lsb(promo_pushes);
+				// We only care about Queen promos in QS for speed
+				moves.push_back(Move(to - 8, to, MoveFlags::PromoQueen));
+			}
+		}
+		else { // For Black: Shift down 8
+			ui64 promo_pushes = (us_pawns >> 8) & empty & RANK_1;
+			while (promo_pushes) {
+				int to = Bitwise::pop_lsb(promo_pushes);
+				moves.push_back(Move(to + 8, to, MoveFlags::PromoQueen));
+			}
+		}
+	}
+
 	template<MoveType T>
-	MoveList generate_moves(const Position::Position & pos) {
-		MoveList moves{};
+	void generate_moves(const Position::Position & pos, MoveList& moves) {
 		generate_queen_moves<T>(pos, moves);
 		generate_rook_moves<T>(pos, moves);
 		generate_bishop_moves<T>(pos, moves);
 		generate_knight_moves<T>(pos, moves);
 		generate_pawn_moves<T>(pos, moves);
 		generate_king_moves<T>(pos, moves);
+	}
+
+	[[nodiscard]] MoveList generate_captures(const Position::Position& pos) {
+		MoveList moves{};
+		generate_moves<MoveType::CAPTURE>(pos, moves);
 		return moves;
 	}
 
-	[[nodiscard]] MoveList generate_captures(const Position::Position & pos) {
-		return generate_moves<MoveType::CAPTURE>(pos);
+	[[nodiscard]] MoveList generate_captures_and_promos(const Position::Position& pos) {
+		MoveList moves{};
+		generate_moves<MoveType::CAPTURE>(pos, moves);
+		generate_quiet_promotions(pos, moves);
+		return moves;
 	}
-
 	[[nodiscard]] MoveList generate_quiets(const Position::Position & pos) {
-		return generate_moves<MoveType::QUIET>(pos);
+		MoveList moves{};
+		generate_moves<MoveType::QUIET>(pos, moves);
+		return moves;
 	}
 
 	[[nodiscard]] MoveList generate_all_moves(const Position::Position & pos) {
-		return generate_moves<MoveType::ALL>(pos);
+		MoveList moves{};
+		generate_moves<MoveType::CAPTURE>(pos, moves);
+		generate_moves<MoveType::QUIET>(pos, moves);
+		return moves;
 	}
 
 	bool has_legal_moves(Position::Position& pos) {
