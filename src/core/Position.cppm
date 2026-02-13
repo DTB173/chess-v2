@@ -157,6 +157,7 @@ export namespace Position {
 	private:
         struct StateRecord {
             ui64 prev_zobrist;
+            ui64 prev_pawn;
             Move prev_half_move;
             Piece captured_piece;
             Flags prev_flags;
@@ -168,8 +169,8 @@ export namespace Position {
         ui64 total_pieces;
 
         std::array<Piece, 64> mailbox{};
-
         ui64 zobrist_key{};
+        ui64 pawns_key{};
 		Score current_score{};
 		int current_phase{};
         Flags metadata{};
@@ -183,6 +184,7 @@ export namespace Position {
 		Position& operator=(const Position& other) = delete;
 
 		ui64 get_zobrist_key() const { return zobrist_key; }
+        ui64 get_pawn_key() const { return pawns_key; }
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
 		inline Color turn() const { return metadata.side_to_move(); }
@@ -199,7 +201,7 @@ export namespace Position {
             return occupancy[static_cast<int>(c) - 1];
 		}
         inline ui64 get_total_occupancy()const { return total_pieces; }
-
+        inline int half_move_count()const { return history_idx - 1; }
         inline bool is_legal(Move m) {
             Color us = turn(); // get 'us' before, make_move toogles turn
             make_move(m);
@@ -406,7 +408,7 @@ export namespace Position {
 
             // Recompute zobrist key
             zobrist_key = compute_hash_from_scratch();
-
+            pawns_key = compute_pawn_key();
             // Recompute evaluation phase and score
             current_phase = 0;
             current_score = Score{ 0, 0 };
@@ -487,7 +489,7 @@ export namespace Position {
 
 			// Init zobrist key
             zobrist_key = compute_hash_from_scratch();
-
+            pawns_key = compute_pawn_key();
 			current_phase = 0;
 			current_score = Score{ 0,0 };
 
@@ -506,7 +508,8 @@ export namespace Position {
 
         // NPM helpers
         void make_null_move() {
-            history[history_idx++] = { zobrist_key, Move{}, Piece(), metadata };
+            history[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
+            assert(history_idx < history.size());
 
             if (metadata.en_passant_square() != Square::SQ_NONE) {
                 zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
@@ -520,6 +523,7 @@ export namespace Position {
             StateRecord prev = history[--history_idx];
             metadata = prev.prev_flags;
             zobrist_key = prev.prev_zobrist;
+            pawns_key = prev.prev_pawn;
         }
 
         void make_move(Move m) {
@@ -531,7 +535,8 @@ export namespace Position {
             Piece captured = mailbox[to];
 
             // 1. History(Must store captured piece for undo)
-            history[history_idx++] = { zobrist_key, m, captured, metadata };
+            history[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
+            assert(history_idx < history.size());
 
             // 2. XOR OUT old metadata before we change it
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
@@ -580,6 +585,7 @@ export namespace Position {
             zobrist_key ^= Zobrist::side;
 
             assert(zobrist_key == compute_hash_from_scratch());
+            assert(pawns_key == compute_pawn_key());
         }
 
         void undo_move() {
@@ -619,6 +625,7 @@ export namespace Position {
             // 4. Restore Metadata
             metadata = prev.prev_flags;
 			zobrist_key = prev.prev_zobrist;
+            pawns_key = prev.prev_pawn;
         }
 
         void inline place_piece(Piece piece, Square sq) {
@@ -630,6 +637,8 @@ export namespace Position {
             mailbox[sq] = piece;
             // XOR IN
             zobrist_key ^= Zobrist::pieces[idx][sq];
+
+            if (piece.type() == PieceType::PAWN) pawns_key^= Zobrist::pieces[idx][sq];
 
             if (piece.type() == PieceType::KING) king_sq[static_cast<int>(piece.color()) - 1] = sq;
 
@@ -650,6 +659,8 @@ export namespace Position {
             mailbox[sq] = Piece();
             // XOR OUT
             zobrist_key ^= Zobrist::pieces[idx][sq];
+
+            if (piece.type() == PieceType::PAWN) pawns_key^= Zobrist::pieces[idx][sq];
 
 			constexpr int weight[] = { 1, -1 };
             Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
@@ -796,7 +807,7 @@ export namespace Position {
         }
 
         ui64 compute_hash_from_scratch() const {
-            ui64 h = 0ULL;
+            ui64 h{};
 
             for (int p_idx = 0; p_idx < 12; ++p_idx) {
                 ui64 bb = board[p_idx];
@@ -819,6 +830,22 @@ export namespace Position {
             return h;
         }
 
+        ui64 compute_pawn_key() const {
+            ui64 k{};
+
+            ui64 wpawns = board[0];
+            while (wpawns) {
+                int sq = Bitwise::pop_lsb(wpawns);
+                k ^= Zobrist::pieces[0][sq];
+            }
+
+            ui64 bpawns = board[6];
+            while (bpawns) {
+                int sq = Bitwise::pop_lsb(bpawns);
+                k ^= Zobrist::pieces[6][sq];
+            }
+            return k;
+        }
         void print_attacks(std::ostream& out, ui64 attacks) const {
             out << "\n    a   b   c   d   e   f   g   h\n";
             out << "  +---+---+---+---+---+---+---+---+\n";
