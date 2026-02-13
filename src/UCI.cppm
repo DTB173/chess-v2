@@ -163,19 +163,29 @@ export namespace UCI {
 					int time_left = is_white ? wtime : btime;
 					int inc = is_white ? winc : binc;
 
-					int divisor;
-					if (movestogo != -1) {
-						divisor = movestogo + 1;
+					// Use total plies to find move number
+					int current_move = pos.half_move_count() / 2;
+
+					// 1. Dynamic Divisor: Target Move 40 for the bank drain.
+					// At Move 1, divisor is 40. At Move 30, divisor is 10.
+					int divisor = std::max(10, 40 - current_move);
+
+					// 2. Base Calculation
+					// We spend a larger chunk of the bank and 90% of the increment.
+					double base_time = (double)time_left / divisor;
+					time_for_move_ms = (int)(base_time + (inc * 0.9));
+
+					// 3. Middle Game "Combat" Bonus (Moves 10-30)
+					
+					if (current_move >= 10 && current_move <= 30) {
+						time_for_move_ms = (int)(time_for_move_ms * 1.25);
 					}
-					else {
-						divisor = 30;
-					}
-					// Subtract a 50ms "Safety Buffer" for network/OS lag
-					time_for_move_ms = (time_left / divisor) + (inc * 0.8) - 50;
+					// 4. Safety Buffer
+					time_for_move_ms -= 50;
 				}
 				else {
-					// Fallback for "go" with no arguments (e.g. 2 seconds)
-					time_for_move_ms = 2000;
+					// Fallback for "go" with no arguments (e.g. 15 seconds)
+					time_for_move_ms = 15000;
 				}
 
 				time_for_move_ms = std::max(20, time_for_move_ms);
