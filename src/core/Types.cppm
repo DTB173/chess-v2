@@ -10,6 +10,7 @@ export namespace Types {
     using ui32 = std::uint32_t;
 	using ui16 = std::uint16_t;
     using ui8  = std::uint8_t;
+    using i16  = std::int16_t;
    
     namespace MoveFlags {
         // Basic types
