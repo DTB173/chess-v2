@@ -1,0 +1,4 @@
+.vs/ 
+build-gcc/
+build-gcc-neweval/
+out/

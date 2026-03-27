@@ -1,0 +1,515 @@
+#pragma once
+
+#include <algorithm>
+
+#include "Position.h"
+#include "Types.h"
+#include "Bitboards.h"
+#include "AttackTables.h"
+#include "TranspositionTable.h"
+#include "PawnTable.h"
+
+namespace Eval {
+	using namespace Types;
+	using namespace AttackTables;
+	using namespace TranspositionTable;
+
+    constexpr int passed_pawn_bonus_mg[8] = { 0, 0,  5, 10, 25,  60, 120, 0 };
+    constexpr int passed_pawn_bonus_eg[8] = { 0, 5, 15, 30, 70, 140, 250, 0 };
+
+    constexpr inline Score pawn_passed_candidate[2][8]{
+        {{0, 0}, {-10, -20}, {-15, 20}, {-15, 30}, {-20,  60}, {20, 60}, {0, 0}, {0, 0}},
+        {{0, 0}, {-10,  20}, { -5, 25}, {  0, 50}, { 20, 110}, {50, 70}, {0, 0}, {0, 0}}
+    };
+
+    constexpr inline Score pawn_isolated[8] = {
+        {-10, -10}, {0, -15}, {0, -15}, {0, -20}, {0, -20}, {0, -15}, {-5, -15}, {-5, -15}
+    };
+
+    constexpr inline Score pawn_stacked[2][8] = {
+        {{10, -30}, {0, -25}, { 0, -20}, { 0, -20}, { 5, -20}, {5, -25}, {5, -30}, {5, -30} },
+        {{ 3, -15}, {0, -15}, {-5, -10}, {-5, -10}, {-5, -10}, {0, -10}, {0, -10}, {0, -15}},
+    };
+
+    constexpr inline Score pawn_backward[2][8] = {
+       {{0, 0}, {  0,  -5}, { 5,  -5}, {5, -15}, {-5, -30}, {0, 0}, {0, 0}, {0, 0}},
+       {{0, 0}, {-10, -30}, {-5, -30}, {5, -30}, {30, -40}, {0, 0}, {0, 0}, {0, 0}},
+    };
+
+    constexpr inline Score pawn_connected32[32] = {
+        {   0,   0}, {   0,   0}, {   0,   0}, {   0,   0},
+        {   0, -10}, {  10,  -5}, {   0,  -0}, {   5,  10},
+        {  15,   0}, {  20,  -5}, {  20,   0}, {  15,  10},
+        {   5,   0}, {  20,   0}, {   5,   0}, {  15,  10},
+        {  10,  15}, {  20,  20}, {  30,  20}, {  25,  20},
+        {  45,  40}, {  35,  65}, {  60,  75}, {  65,  90},
+        { 110,  35}, { 215,  45}, { 215,  70}, { 235,  60},
+        {   0,   0}, {   0,   0}, {   0,   0}, {   0,   0},
+    };
+
+    constexpr inline Score knight_outpost[2][2] = {
+        {{10, -5}, {40, 0}}, 
+        {{ 5, -5}, {20,-5}}
+    };
+
+    constexpr inline Score knight_behind_pawn = { 0, 30 };
+
+    constexpr inline Score knight_in_narnia[4] = {
+        {-10, -5}, {-10, -20}, {-30, -20}, {-50, -20}
+    };
+
+    constexpr inline Score bishop_pair = { 20, 90 };
+
+    constexpr inline Score bishop_outpost[2][2] = {
+        {{15, -15}, {50, -5}},
+        {{10, -10}, { 5,  5}}
+    };
+
+    constexpr inline Score bishop_behind_pawn = { 5, 25 };
+    constexpr inline Score bishop_long_diagonal = { 25, 20 };
+
+    constexpr inline Score rook_file[2] = {
+        {10, 10}, {35, 10}
+    };
+
+    constexpr inline Score rook_on_seventh = { 0, 40 };
+
+    constexpr inline Score queen_relative_pin = { -20, -15 };
+
+    constexpr inline Score king_shelter[2][8] = {
+        { {  0,   0}, { -5,  -5}, { 10,  10}, { 25,  30}, { 40,  45}, { 55,  60}, { 65,  70}, { 70,  75} },
+        { {  0,   0}, {  5,   5}, { 20,  25}, { 45,  55}, { 70,  85}, { 90, 110}, {105, 130}, {115, 145} }
+    };
+
+    constexpr inline Score king_storm[2][8] = {
+        { {  0,   0}, {  5,   0}, { 15,   5}, { 25,  10}, { 35,  15}, { 45,  20}, { 55,  25}, { 60,  30} },
+        { {  0,   0}, { 10,   5}, { 25,  15}, { 40,  25}, { 60,  40}, { 80,  55}, {100,  75}, {110,  90} }
+    };
+
+    constexpr inline Score passed_pawn[2][2][8] = {
+          {{{ 0, 0}, { -40, -5}, { -40, 25}, { -60, 30}, { 10, 20}, { 100,  -5}, { 160,  45}, { 0, 0}},
+           {{ 0, 0}, { -30, 15}, { -40, 40}, { -55, 45}, {  0, 55}, { 115,  55}, { 195,  95}, { 0, 0}}},
+          {{{ 0, 0}, { -30, 30}, { -45, 35}, { -60, 55}, { 10, 65}, { 105,  75}, { 260, 125}, { 0, 0}},
+           {{ 0, 0}, { -30, 25}, { -40, 35}, { -55, 60}, { 10, 90}, {  95, 165}, { 125, 295}, { 0, 0}}},
+    };
+
+    constexpr inline Score passed_friendly_distance[8] = {
+    {   0,   0}, {  -3,   1}, {   0,  -4}, {   5, -13},
+    {   6, -19}, {  -9, -19}, {  -9,  -7}, {   0,   0},
+    };
+
+    constexpr inline Score passed_enemy_distance[8] = {
+        {   0,   0}, {   5,  -1}, {   7,   0}, {   9,  11},
+        {   0,  25}, {   1,  37}, {  16,  37}, {   0,   0},
+    };
+
+    constexpr inline Score passed_safe_promo_path = { -49,  57 };
+
+    constexpr inline Score knight_mobility[] = {
+        {-105, -140}, {-45, -115}, {-20, -35}, { -5, 0},
+        {  -8,    5}, {  5,   15}, { 10,  35}, { 20, 40},
+        {  30,   35}, { 45, 15}
+    };
+
+    constexpr inline Score bishop_mobility[] = {
+        {-100, -185}, {-45, -125}, {-15, -55}, { -5, -15},
+        {   5,    0}, { 15,   20}, { 15,  35}, { 20,  40},
+        {  20,   50}, { 25,   50}, { 25,  50}, { 50,  30},
+        {  55,   45}, { 85,    0}
+    };
+
+    constexpr inline Score rook_mobility[] = {
+        {-125,-150}, { -55,-125}, { -25, -85}, { -10, -30},
+        { -10,   0}, { -10,  25}, { -10,  40}, {  -5,  45},
+        {   5,  50}, {   5,  55}, {  10,  65}, {  20,  70},
+        {  20,  75}, {  35,  60}, { 100,  15},
+    };
+
+    constexpr inline Score queen_mobility[] = {
+        {-110,-275}, {-255,-400}, {-125,-230}, { -45,-235},
+        { -20,-175}, { -10, -85}, {   0, -35}, {   0,   0},
+        {  10,  10}, {  10,  30}, {  15,  35}, {  15,  55},
+        {  20,  45}, {  25,  55}, {  20,  60}, {  20,  65},
+        {  25,  60}, {  15,  65}, {  15,  65}, {  18,  50},
+        {  25,  30}, {  40,  10}, {  35, -10}, {  30, -30},
+        {  10, -45}, {   5, -80}, { -40, -30}, { -25, -50},
+    };
+
+    constexpr inline int SafetyTable[100] = {
+            0,  0,   1,   2,   3,   5,   7,   9,  12,  15,
+          18,  22,  26,  30,  35,  39,  44,  50,  56,  62,
+          68,  75,  82,  85,  89,  97, 105, 113, 122, 131,
+         140, 150, 169, 180, 191, 202, 213, 225, 237, 248,
+         260, 272, 283, 295, 307, 319, 330, 342, 354, 366,
+         377, 389, 401, 412, 424, 436, 448, 459, 471, 483,
+         494, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+         500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+         500, 500, 500, 500, 500, 500, 500, 500, 500, 500,
+         500, 500, 500, 500, 500, 500, 500, 500, 500, 500
+    };
+
+    PawnTable::PawnTable pawns_cache(16);
+
+    ui64 discovered_attacks(const Position::Position& pos, Square sq, Color us) {
+        Color them = opponent_of(us);
+
+        ui64 occupied = pos.get_total_occupancy();
+
+        ui64 rook_attacks = get_rook_attacks(sq, occupied);
+        ui64 bishop_attacks = get_bishop_attacks(sq, occupied);
+
+        ui64 enemy_rooks = pos.get_bitboard(PieceType::ROOK, them) & ~rook_attacks;
+        ui64 enemy_bishops = pos.get_bitboard(PieceType::BISHOP, them) & ~bishop_attacks;
+
+        return (enemy_rooks & get_rook_attacks(sq, occupied & ~rook_attacks))
+            | (enemy_bishops & get_bishop_attacks(sq, occupied & ~bishop_attacks));
+    }
+
+    Score evaluate_pawns(const Position::Position& pos, Color us, ui64& passed_pawns) {
+        Color them = opponent_of(us);
+        int forward = (us == Color::WHITE) ? 8 : -8;
+
+        Score score = Score(0, 0);
+        ui64 my_pawns    = pos.get_bitboard(PieceType::PAWN, us);
+        ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
+
+        ui64 temp = my_pawns;
+        while (temp) {
+            Square sq = Bitwise::pop_lsb(temp);
+            int rank  = Bitboards::relative_rank_of(sq, us);
+            int file  = Bitboards::file_of(sq);
+
+            ui64 neighbours   = my_pawns    & Bitboards::adjacent_files_mask(file);
+            ui64 backup       = my_pawns    & Bitboards::get_passed_mask(sq, them);
+            ui64 stoppers     = enemy_pawns & Bitboards::get_passed_mask(sq, us);
+            ui64 threats      = enemy_pawns & get_pawn_attacks(sq, us);
+            ui64 support      = my_pawns    & get_pawn_attacks(sq, them);
+            ui64 push_threats = enemy_pawns & get_pawn_attacks(sq + forward, us);
+            ui64 push_support = my_pawns    & get_pawn_attacks(sq + forward, them);
+            ui64 leftovers    = stoppers ^ threats ^ push_threats;
+
+            // Passed Pawn
+            if (!stoppers) {
+                Bitwise::set_bit(passed_pawns, sq);
+            }
+            // Candidate Passed Pawn
+            else if (!leftovers && Bitwise::count(push_support) > Bitwise::count(push_threats)) {
+                bool supported = (Bitwise::count(support) >= Bitwise::count(threats));
+                score += pawn_passed_candidate[supported][rank];
+            }
+
+            // Isolated Pawn
+            if (neighbours == 0 && threats == 0) {
+                score += pawn_isolated[file];
+            }
+
+            // Stacked / Doubled Pawns
+            if (Bitwise::count(Bitboards::file_mask(file) & my_pawns) > 1) {
+                bool can_undouble = (stoppers && (threats || neighbours))
+                    || (stoppers & ~Bitboards::forward_file_mask(sq, us));
+                score += pawn_stacked[can_undouble ? 0 : 1][file];
+            }
+
+            // Backward Pawn
+            if (neighbours && push_threats && !backup) {
+                bool can_be_attacked_safely = !(Bitboards::file_mask(file) & enemy_pawns);
+                score += pawn_backward[can_be_attacked_safely ? 0 : 1][rank];
+            }
+            // Connected Pawns
+            else if ((AttackTables::get_connected_mask(sq, us) & my_pawns)) {
+                score += pawn_connected32[Bitboards::relative_square32(sq, us)];
+            }
+        }
+
+        return score;
+    }
+
+    Score evaluate_pawn_structure(const Position::Position& pos) {
+        if (auto* pentry = pawns_cache.probe(pos.get_pawn_key()); pentry) {
+            return { pentry->score_mg, pentry->score_eg };
+        }
+
+        ui64 passed_pawns{};
+        Score white_score = evaluate_pawns(pos, Color::WHITE, passed_pawns);
+        Score black_score = evaluate_pawns(pos, Color::BLACK, passed_pawns);
+
+        Score s = white_score - black_score;
+        pawns_cache.store(pos.get_pawn_key(), s.mg, s.eg, passed_pawns);
+        return s;
+    }
+
+    Score evaluate_knights(const Position::Position& pos, Color us) {
+        Color them = opponent_of(us);
+        ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
+        ui64 my_pawns = pos.get_bitboard(PieceType::PAWN, us);
+        ui64 temp = pos.get_bitboard(PieceType::KNIGHT, us);
+
+        Square my_ksq = pos.get_king_square(us);
+        Square enemy_ksq = pos.get_king_square(them);
+
+        Score score{};
+
+        while (temp) {
+            Square sq = Bitwise::pop_lsb(temp);
+
+            // Outpost: Only if it can't be chased by enemy pawns
+            if (Bitwise::test_bit(Bitboards::get_outpost_rank_mask(us), sq)
+                && !(Bitboards::outpost_square_mask(sq, us) & enemy_pawns))
+            {
+                bool outside = (Bitboards::file_of(sq) < 2 || Bitboards::file_of(sq) > 5);
+                bool defended = (AttackTables::get_pawn_attacks(sq, them) & my_pawns);
+                score += knight_outpost[outside][defended];
+            }
+
+            // Knight behind pawn 
+            Square behind = (us == Color::WHITE) ? sq - 8 : sq + 8;
+            if (behind >= 0 && behind < 64 && (my_pawns & (1ULL << behind))) {
+                score += knight_behind_pawn;
+            }
+
+            // Proximity: Chebyshev distance
+            int dist = std::min(Bitboards::distance(sq, my_ksq), Bitboards::distance(sq, enemy_ksq));
+            if (dist >= 4) {
+                score += knight_in_narnia[std::min(dist - 4, 3)]; // Clamp to table size
+            }
+
+            // 4. Mobility
+            ui64 moves = AttackTables::get_knight_attacks(sq) & ~pos.get_occupancy(us);
+            int mobility = Bitwise::count(moves);
+            score += knight_mobility[mobility];
+        }
+        return score;
+    }
+
+    Score evaluate_bishops(const Position::Position& pos, Color us) {
+        Color them = opponent_of(us);
+
+        ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
+        ui64 my_pawns = pos.get_bitboard(PieceType::PAWN, us);
+        ui64 my_bishops = pos.get_bitboard(PieceType::BISHOP, us);
+        ui64 occupancy = pos.get_total_occupancy();
+
+        // Bishop pair bonus
+        Score score = (Bitwise::count(my_bishops) >= 2) ? bishop_pair : Score{ 0,0 };;
+
+        while (my_bishops) {
+            Square sq = Bitwise::pop_lsb(my_bishops);
+
+            // Outpost
+            if (Bitwise::test_bit(Bitboards::get_outpost_rank_mask(us), sq)
+                && !(Bitboards::outpost_square_mask(sq, us) & enemy_pawns))
+            {
+                bool outside = (Bitboards::file_of(sq) == 0 || Bitboards::file_of(sq) == 7);
+                bool defended = (AttackTables::get_pawn_attacks(sq, them) & my_pawns);
+                score += bishop_outpost[outside][defended];
+            }
+
+            // Bishop behind pawn
+            Square behind = (us == Color::WHITE) ? sq - 8 : sq + 8;
+            if (behind >= 0 && behind < 64 && (my_pawns & (1ULL << behind))) {
+                score += bishop_behind_pawn;
+            }
+
+            // Center control
+            ui64 diagonal_attacks = get_bishop_attacks(sq, occupancy);
+            if (((Bitboards::LONG_DIAGONALS & ~Bitboards::CENTER_SQUARES) & (1ULL << sq))
+                && Bitwise::count(diagonal_attacks & Bitboards::CENTER_SQUARES) >= 2) {
+                score += bishop_long_diagonal;
+            }
+
+            // Mobility
+            int mobility = Bitwise::count(get_bishop_attacks(sq, occupancy) & ~pos.get_occupancy(us));
+            score += bishop_mobility[mobility];
+        }
+
+        return score;
+    }
+
+    Score evaluate_rooks(const Position::Position& pos, Color us) {
+        Color them = opponent_of(us);
+
+        ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
+        ui64 my_pawns = pos.get_bitboard(PieceType::PAWN, us);
+        ui64 my_rooks = pos.get_bitboard(PieceType::ROOK, us);
+        ui64 occupancy = pos.get_total_occupancy();
+
+        Score score{};
+        while (my_rooks) {
+            Square sq = Bitwise::pop_lsb(my_rooks);
+
+            // Open file
+            if (!(my_pawns & Bitboards::file_mask(Bitboards::file_of(sq)))) {
+                bool open = !(enemy_pawns & Bitboards::file_mask(Bitboards::file_of(sq)));
+                score += rook_file[open];
+            }
+
+            // Rook seventh
+            bool enemy_king_back = Bitboards::relative_rank_of(pos.get_king_square(them), us) >= 6;
+            bool enemy_pawns_there = enemy_pawns & Bitboards::rank_mask(Bitboards::relative_rank_of(sq, us));
+
+            if (Bitboards::relative_rank_of(sq, us) == 6 && (enemy_king_back || enemy_pawns_there)) {
+                score += rook_on_seventh;
+            }
+
+            // Mobility
+            int mobility = Bitwise::count(get_rook_attacks(sq, occupancy) & ~pos.get_occupancy(us));
+            score += rook_mobility[mobility];
+        }
+        return score;
+    }
+
+    Score evaluate_queens(const Position::Position& pos, Color us) {
+        ui64 my_queens = pos.get_bitboard(PieceType::QUEEN, us);
+        ui64 occupancy = pos.get_total_occupancy();
+
+        Score score{};
+
+        while (my_queens) {
+            Square sq = Bitwise::pop_lsb(my_queens);
+
+            if (discovered_attacks(pos, sq, us)) {
+                score += queen_relative_pin;
+            }
+
+            int mobility = Bitwise::count(get_queen_attacks(sq, occupancy) & ~pos.get_occupancy(us));
+            score += queen_mobility[mobility];
+        }
+
+        return score;
+    }
+
+    Score evaluate_king_shelter(const Position::Position& pos, Color us) {
+        Square ksq = pos.get_king_square(us);
+        Color them = opponent_of(us);
+        int king_file = Bitboards::file_of(ksq);
+        Score total = Score(0, 0);
+
+        for (int f = std::max(0, king_file - 1); f <= std::min(7, king_file + 1); ++f) {
+            bool is_king_file = (f == king_file);
+
+            // Friendly pawn shelter
+            ui64 our_pawns = pos.get_bitboard(PieceType::PAWN, us) & Bitboards::file_mask(f);
+            int our_dist = 7;
+            if (our_pawns) {
+                Square closest = (us == Color::WHITE) ? Bitboards::backmost(us, our_pawns)
+                    : Bitboards::frontmost(us, our_pawns);
+                our_dist = std::abs(Bitboards::rank_of(ksq) - Bitboards::rank_of(closest));
+            }
+
+            // Enemy pawn storm
+            ui64 their_pawns = pos.get_bitboard(PieceType::PAWN, them) & Bitboards::file_mask(f);
+            int their_dist = 7;
+            if (their_pawns) {
+                Square closest = (us == Color::WHITE) ? Bitboards::frontmost(them, their_pawns)
+                    : Bitboards::backmost(them, their_pawns);
+                their_dist = std::abs(Bitboards::rank_of(ksq) - Bitboards::rank_of(closest));
+            }
+
+            bool blocked = (our_dist != 7 && our_dist == their_dist - 1);
+
+            total += king_shelter[is_king_file][our_dist];
+            total += king_storm[blocked][their_dist];
+        }
+
+        return total;
+    }
+
+    int evaluate_king_attack(const Position::Position& pos, Color us) {
+        Color them = opponent_of(us);
+        Square ksq = pos.get_king_square(us);
+        ui64 zone = Bitboards::king_area(ksq);
+        ui64 occupancy = pos.get_total_occupancy();
+        ui64 queen_bb = pos.get_bitboard(PieceType::QUEEN, them);
+        int attackers = 0;
+
+        while (queen_bb) {
+            Square queen_sq = Bitwise::pop_lsb(queen_bb);
+            ui64 queen_attacks = get_queen_attacks(queen_sq, occupancy);
+            if (queen_attacks & zone) {
+                attackers += 5;
+            }
+        }
+        attackers += Bitwise::count(pos.get_bitboard(PieceType::ROOK, them) & zone) * 3;
+        attackers += Bitwise::count(pos.get_bitboard(PieceType::BISHOP, them) & zone) * 2;
+        attackers += Bitwise::count(pos.get_bitboard(PieceType::KNIGHT, them) & zone) * 2;
+
+        if (attackers < 2) return 0;
+
+        int index = attackers * attackers / 2;
+        return SafetyTable[std::min(index, 99)];
+    }
+
+    Score evaluate_kings(const Position::Position& pos, Color us) {
+        Score shelter = evaluate_king_shelter(pos, us);
+        int attack = evaluate_king_attack(pos, us);
+
+        return shelter * 2 + Score(attack, attack / 3);
+    }
+
+    Score evaluate_passed(const Position::Position& pos, Color us) {
+        Color them = opponent_of(us);
+        auto* pentry = pawns_cache.probe(pos.get_pawn_key());
+        if (!pentry) return {};
+        
+        ui64 my_passed = pentry->passed_pawns & pos.get_bitboard(PieceType::PAWN, us);
+        ui64 temp_passed = my_passed;
+        ui64 occupied = pos.get_total_occupancy();
+        ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
+
+        Score score{};
+        while (temp_passed) {
+            Square sq = Bitwise::pop_lsb(temp_passed);
+            int rank = Bitboards::relative_rank_of(sq, us);
+
+            Square next_sq = (us == Color::WHITE) ? sq + 8 : sq - 8;
+            bool can_advance = !(occupied & (1ULL << next_sq));
+            bool safe_advance = can_advance && !(AttackTables::get_pawn_attacks(next_sq, us) & enemy_pawns);
+
+            score += passed_pawn[can_advance][safe_advance][rank];
+
+            // King Proximity
+            int my_dist = Bitboards::distance(sq, pos.get_king_square(us));
+            int enemy_dist = Bitboards::distance(sq, pos.get_king_square(them));
+
+            score += my_dist * passed_friendly_distance[rank];
+            score += enemy_dist * passed_enemy_distance[rank];
+
+            // Simple "Storm" Check (Is the path clear of pieces?)
+            ui64 path = Bitboards::forward_file_mask(sq, us) & Bitboards::file_mask(Bitboards::file_of(sq));
+            if (!(path & occupied)) {
+                score += passed_safe_promo_path;
+            }
+        }
+        return score;
+    }
+
+    Score evaluate_pieces(const Position::Position& pos) {
+        Score s{};
+        s += evaluate_pawn_structure(pos);
+        s += evaluate_knights(pos, Color::WHITE) - evaluate_knights(pos, Color::BLACK);
+        s += evaluate_bishops(pos, Color::WHITE) - evaluate_bishops(pos, Color::BLACK);
+        s += evaluate_rooks  (pos, Color::WHITE) - evaluate_rooks  (pos, Color::BLACK);
+        s += evaluate_queens (pos, Color::WHITE) - evaluate_queens (pos, Color::BLACK);
+        s += evaluate_kings  (pos, Color::WHITE) - evaluate_kings  (pos, Color::BLACK);
+        s += evaluate_passed (pos, Color::WHITE) - evaluate_passed (pos, Color::BLACK);
+
+        return s;
+    }
+
+	int evaluate(const Position::Position& pos, TT& tt, ui8 current_age) {
+		ui64 key = pos.get_zobrist_key();
+		auto* entry = tt.probe(key);
+		if (entry && entry->static_eval != Constants::SCORE_NONE) {
+			return entry->static_eval;
+		}
+
+        int phase = pos.get_phase();
+        int psqt_score = pos.evaluate();
+        Score total_score = evaluate_pieces(pos);;
+ 
+        int final_eval = total_score.eval(phase) + psqt_score;
+
+        tt.store_eval(key, static_cast<i16>(final_eval), current_age);
+        return final_eval;
+	}
+}
