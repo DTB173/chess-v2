@@ -12,7 +12,7 @@ target_sources(engine
         ${CMAKE_CURRENT_SOURCE_DIR}/Search.h
         ${CMAKE_CURRENT_SOURCE_DIR}/TranspositionTable.h
         ${CMAKE_CURRENT_SOURCE_DIR}/See.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/Evaluation.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/Evaluationv2.h
         ${CMAKE_CURRENT_SOURCE_DIR}/PawnTable.h
 )
 
