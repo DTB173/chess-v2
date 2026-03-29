@@ -272,6 +272,7 @@ namespace Eval {
         if (auto* pentry = pawns_cache.probe(pos.get_pawn_key()); pentry) {
             return { pentry->score_mg, pentry->score_eg };
         }
+        }
 
         ui64 passed_pawns{};
         Score white_score = evaluate_pawns(pos, Color::WHITE, passed_pawns, et);
