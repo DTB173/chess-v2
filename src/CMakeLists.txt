@@ -30,6 +30,10 @@ else()
     set_target_properties(chess_engine PROPERTIES
         INTERPROCEDURAL_OPTIMIZATION TRUE
     )
+
+    if(MINGW OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_link_options(chess_engine PRIVATE -Wl,--stack,16777216)
+    endif()
 endif()
 
 set_target_properties(chess_engine PROPERTIES
