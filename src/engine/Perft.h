@@ -55,8 +55,9 @@ namespace Perft
 
     ui64 run_perft(int depth, bool bulk) {
         Zobrist::init();
-        Position::Position pos;
-        pos.init_start_pos();
+        Position::Position pos; 
+        constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        pos.set_fen(startpos);
         
         return perft(pos, depth, bulk);
     }

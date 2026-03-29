@@ -223,7 +223,7 @@ namespace Eval {
 
                 if (et) {
                     et->add_2d(M::PassedPawnCandidate, supported, relative_rank, 8 , sign);
-            }
+                }
             }
 
             // Isolated Pawn
@@ -231,7 +231,7 @@ namespace Eval {
                 score += pawn_isolated[file];
                 if (et) {
                     et->add_1d(M::PawnIsolated, file, sign);
-            }
+                }
             }
 
             // Stacked / Doubled Pawns
@@ -242,7 +242,7 @@ namespace Eval {
                 score += pawn_stacked[stacked_flag][file];
                 if (et) {
                     et->add_2d(M::PawnStacked, stacked_flag, file, 8, sign);
-            }
+                }
             }
 
             // Backward Pawn
@@ -252,7 +252,7 @@ namespace Eval {
                 score += pawn_backward[backwards_flag][rank];
                 if (et) {
                     et->add_2d(M::PawnBackwards, backwards_flag, relative_rank, 8, sign);
-            }
+                }
             }
             // Connected Pawns
             else if ((AttackTables::get_connected_mask(sq, us) & my_pawns)) {
@@ -269,9 +269,9 @@ namespace Eval {
 
     Score evaluate_pawn_structure(const Position::Position& pos, EvalInfo::EvalTrace* et = nullptr) {
         if (!et) {
-        if (auto* pentry = pawns_cache.probe(pos.get_pawn_key()); pentry) {
-            return { pentry->score_mg, pentry->score_eg };
-        }
+            if (auto* pentry = pawns_cache.probe(pos.get_pawn_key()); pentry) {
+                return { pentry->score_mg, pentry->score_eg };
+            }
         }
 
         ui64 passed_pawns{};
@@ -309,7 +309,7 @@ namespace Eval {
 
                 if (et) {
                     et->add_2d(M::KnightOutpost, outside, defended, 2, sign);
-            }
+                }
             }
 
             // Knight behind pawn 
@@ -319,7 +319,7 @@ namespace Eval {
 
                 if (et) {
                     et->add((size_t)M::KnightBehindPawn, sign);
-            }
+                }
             }
 
             // Proximity: Chebyshev distance
@@ -330,7 +330,7 @@ namespace Eval {
 
                 if (et) {
                     et->add_1d(M::KnightInNarnia, d, sign);
-            }
+                }
             }
 
             // 4. Mobility
@@ -340,7 +340,7 @@ namespace Eval {
 
             if (et) {
                 et->add_1d(M::KnightMobility, mobility, sign);
-        }
+            }
         }
         return score;
     }
@@ -559,7 +559,7 @@ namespace Eval {
             Square bishop_sq = Bitwise::pop_lsb(bishop_bb);
             ui64 bishop_attacks = get_bishop_attacks(bishop_sq, occupancy);
             attack_weight += 3 * ((bishop_attacks & zone) != 0);
-            }
+        }
 
         ui64 knight_bb = pos.get_bitboard(PieceType::KNIGHT, them);
         enemy_material += 3 * Bitwise::count(knight_bb);
@@ -664,11 +664,11 @@ namespace Eval {
 
 	int evaluate(const Position::Position& pos, TT& tt, ui8 current_age, EvalInfo::EvalTrace* et = nullptr) {
         if (!et) {
-		ui64 key = pos.get_zobrist_key();
-		auto* entry = tt.probe(key);
-		if (entry && entry->static_eval != Constants::SCORE_NONE) {
-			return entry->static_eval;
-		}
+            ui64 key = pos.get_zobrist_key();
+            auto* entry = tt.probe(key);
+            if (entry && entry->static_eval != Constants::SCORE_NONE) {
+                return entry->static_eval;
+            }
         }
 
         int phase = pos.get_phase();
