@@ -460,44 +460,6 @@ namespace Position {
             return true;
         }
 
-            for (int f = 0; f < 8; ++f)
-                place(static_cast<Square>(f + 48), Piece(Color::BLACK, PieceType::PAWN)); // Rank 7
-
-            king_sq[0] = Square::SQ_E1;
-            king_sq[1] = Square::SQ_E8;
-
-			metadata = Flags(); // all castling rights, white to move, no ep, clock=0
-            // Update occupancy
-            int white_idx = static_cast<int>(Color::WHITE) - 1;
-            int black_idx = static_cast<int>(Color::BLACK) - 1;
-            occupancy[white_idx] = 0;
-            occupancy[black_idx] = 0;
-
-            for (int i = 0; i < 6; ++i) {
-                occupancy[white_idx] |= board[i];
-                occupancy[black_idx] |= board[i + 6];
-            }
-
-            total_pieces = occupancy[white_idx] | occupancy[black_idx];
-
-			// Init zobrist key
-            zobrist_key = compute_hash_from_scratch();
-            pawns_key = compute_pawn_key();
-			current_phase = 0;
-			current_score = Score{ 0,0 };
-
-            for (int i{}; i < 64; ++i) {
-                Piece p = mailbox[i];
-                if (!p.is_none()) {
-                    Score psq = PSQTables::get_piece_value(p.type(), p.color(), i);
-                    constexpr int weight[] = { 1, -1 };
-                    current_score += psq * weight[static_cast<int>(p.color()) - 1];
-                    if (p.type() > PieceType::PAWN && p.type() < PieceType::KING) {
-                        current_phase += PIECE_PHASE_WEIGHT[static_cast<int>(p.type()) - 1];
-                    }
-				}
-            }
-        }
 
         // NPM helpers
         void make_null_move() {
@@ -567,7 +529,7 @@ namespace Position {
                 remove_piece(mailbox[victim_sq], victim_sq);
             }
             else if (flags == MoveFlags::Castling) {
-				auto [r_from, r_to] = CASTLE_ROOK[to];
+                auto [r_from, r_to] = CASTLE_ROOK[to];
                 move_piece(mailbox[r_from], r_from, r_to); 
             }
 
