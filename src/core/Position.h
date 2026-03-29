@@ -7,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <sstream>
+#include <memory>
 
 #include "Types.h"
 #include "Bitboards.h"
@@ -164,10 +165,10 @@ namespace Position {
             Flags prev_flags;
         };
 
-        std::array<StateRecord, 4096> history;
+        std::unique_ptr<std::array<StateRecord, 2048>> history;
         std::array<ui64, 12> board{};
         std::array<ui64, 2> occupancy{};
-        ui64 total_pieces;
+        ui64 total_pieces{};
 
         std::array<Piece, 64> mailbox{};
         ui64 zobrist_key{};
@@ -178,11 +179,28 @@ namespace Position {
         size_t history_idx{};
         Square king_sq[2];
     public:
-        Position() = default;
+        Position() : history(std::make_unique<std::array<StateRecord, 2048>>()) {};
+        Position(const Position& other)
+            : board(other.board),
+            occupancy(other.occupancy),
+            total_pieces(other.total_pieces),
+            mailbox(other.mailbox),
+            zobrist_key(other.zobrist_key),
+            pawns_key(other.pawns_key),
+            current_score(other.current_score),
+            current_phase(other.current_phase),
+            metadata(other.metadata),
+            history_idx(other.history_idx)
+        {
+            history = std::make_unique<std::array<StateRecord, 2048>>(*other.history);
+
+            king_sq[0] = other.king_sq[0];
+            king_sq[1] = other.king_sq[1];
+        }
 
 		// prevent accidental copying
-		Position(const Position& other) = delete;
-		Position& operator=(const Position& other) = delete;
+		//Position(const Position& other) = delete;
+		//Position& operator=(const Position& other) = delete;
 
 		ui64 get_zobrist_key() const { return zobrist_key; }
         ui64 get_pawn_key() const { return pawns_key; }
@@ -257,7 +275,7 @@ namespace Position {
             int start = std::max(0, static_cast<int>(history_idx - metadata.get_clock()));
 
             for (int i = history_idx - 1; i >= start; --i) {
-                if (history[i].prev_zobrist == zobrist_key) {
+                if ((*history)[i].prev_zobrist == zobrist_key) {
                     return true;
                 }
             }
@@ -509,8 +527,8 @@ namespace Position {
 
         // NPM helpers
         void make_null_move() {
-            history[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
-            assert(history_idx < history.size());
+            (*history)[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
+            assert(history_idx < history->size());
 
             if (metadata.en_passant_square() != Square::SQ_NONE) {
                 zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
@@ -521,7 +539,7 @@ namespace Position {
             metadata.toggle_turn();
         }
         void undo_null_move() {
-            StateRecord prev = history[--history_idx];
+            StateRecord prev = (*history)[--history_idx];
             metadata = prev.prev_flags;
             zobrist_key = prev.prev_zobrist;
             pawns_key = prev.prev_pawn;
@@ -536,8 +554,8 @@ namespace Position {
             Piece captured = mailbox[to];
 
             // 1. History(Must store captured piece for undo)
-            history[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
-            assert(history_idx < history.size());
+            (*history)[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
+            assert(history_idx < history->size());
 
             // 2. XOR OUT old metadata before we change it
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
@@ -576,12 +594,11 @@ namespace Position {
             }
             else if (flags == MoveFlags::Castling) {
 				auto [r_from, r_to] = CASTLE_ROOK[to];
-				move_piece(mailbox[r_from], r_from, r_to); // Rook goes from corner to landing
+                move_piece(mailbox[r_from], r_from, r_to); 
             }
 
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
-            if (metadata.en_passant_file() != -1)
-                zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
+            if (metadata.en_passant_file() != -1) zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
             metadata.toggle_turn();
             zobrist_key ^= Zobrist::side;
 
@@ -590,7 +607,7 @@ namespace Position {
         }
 
         void undo_move() {
-            StateRecord prev = history[--history_idx];
+            StateRecord prev = (*history)[--history_idx];
             const int from = prev.prev_half_move.from();
             const int to = prev.prev_half_move.to();
             const int flags = prev.prev_half_move.flags();
