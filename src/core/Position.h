@@ -459,44 +459,6 @@ namespace Position {
 
             return true;
         }
-        void init_start_pos() {
-            using Types::Square;
-            using Types::Piece;
-
-            // Clear all boards
-            for (int i = 0; i < 12; ++i) board[i] = 0ULL;
-            for (int i = 0; i < 64; ++i) mailbox[i] = Piece();
-
-            auto place = [&](int sq, Piece piece) {
-                int idx = bb_index(piece);
-                Bitwise::set_bit(board[idx], sq);
-                mailbox[sq] = piece;
-                };
-
-            // White pieces
-            place(Square::SQ_A1, Piece(Color::WHITE, PieceType::ROOK));
-            place(Square::SQ_B1, Piece(Color::WHITE, PieceType::KNIGHT));
-            place(Square::SQ_C1, Piece(Color::WHITE, PieceType::BISHOP));
-            place(Square::SQ_D1, Piece(Color::WHITE, PieceType::QUEEN));
-            place(Square::SQ_E1, Piece(Color::WHITE, PieceType::KING));
-            place(Square::SQ_F1, Piece(Color::WHITE, PieceType::BISHOP));
-            place(Square::SQ_G1, Piece(Color::WHITE, PieceType::KNIGHT));
-            place(Square::SQ_H1, Piece(Color::WHITE, PieceType::ROOK));
-
-            
-
-            for (int f = 0; f < 8; ++f)
-                place(static_cast<Square>(f + 8), Piece(Color::WHITE, PieceType::PAWN)); // Rank 2
-
-            // Black pieces
-            place(Square::SQ_A8, Piece(Color::BLACK, PieceType::ROOK));
-            place(Square::SQ_B8, Piece(Color::BLACK, PieceType::KNIGHT));
-            place(Square::SQ_C8, Piece(Color::BLACK, PieceType::BISHOP));
-            place(Square::SQ_D8, Piece(Color::BLACK, PieceType::QUEEN));
-            place(Square::SQ_E8, Piece(Color::BLACK, PieceType::KING));
-            place(Square::SQ_F8, Piece(Color::BLACK, PieceType::BISHOP));
-            place(Square::SQ_G8, Piece(Color::BLACK, PieceType::KNIGHT));
-            place(Square::SQ_H8, Piece(Color::BLACK, PieceType::ROOK));
 
             for (int f = 0; f < 8; ++f)
                 place(static_cast<Square>(f + 48), Piece(Color::BLACK, PieceType::PAWN)); // Rank 7
