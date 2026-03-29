@@ -13,6 +13,7 @@
 #include "AttackTables.h"
 #include "Zobrist.h"
 #include "PSQTables.h"
+#include "../../../texel-tuner/src/engines/EvalInfo.h"
 
 namespace Position {
     using namespace Types;
@@ -417,6 +418,11 @@ namespace Position {
 
                     if (p.type() > PieceType::PAWN && p.type() < PieceType::KING) {
                         current_phase += PIECE_PHASE_WEIGHT[static_cast<int>(p.type()) - 1];
+                    }
+
+                    if (et) {
+                        et->add_material((int)p.type(), (p.color() == Color::WHITE) ? 1 : -1);
+                        et->add_psq((int)p.type(), sq, (int)p.color());
                     }
                 }
             }
