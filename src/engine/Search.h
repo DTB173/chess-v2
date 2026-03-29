@@ -8,6 +8,7 @@
 #include <format>
 #include <chrono>
 #include <atomic>
+#include <mutex>
 
 #include "Types.h"
 #include "Position.h"
@@ -16,6 +17,7 @@
 #include "TranspositionTable.h"
 #include "See.h"
 #include "Evaluation.h"
+//#include "../Logger.h"
 
 namespace Sort {
 	using namespace Types;
@@ -157,7 +159,6 @@ namespace Search {
             Position::Position temp(root_pos);
             std::string pv_str = "";
             int count = 0;
-            Move pv_moves[24];
 
             // Use a local "seen" list or just a strict depth limit to prevent infinite loops
             while (count < 20) {
@@ -172,7 +173,6 @@ namespace Search {
 
                 temp.make_move(entry->move);
                 count++;
-            }
 
                 // Stop if the game is over
                 if (temp.is_draw()) break;
@@ -440,7 +440,7 @@ namespace Search {
             }
         }
     public:
-        static inline std::atomic <bool> stop_signal;
+        static inline std::atomic <bool> stop_signal{};
 
         void set_max_time(double seconds) {
             max_time_ms = seconds * 1000.0;
@@ -471,7 +471,12 @@ namespace Search {
             return std::chrono::duration<double, std::milli>(now - start).count();
         }
 
-
+        void send_uci(const std::string& msg) {
+            static std::mutex cout_mutex;
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << msg << std::endl;
+            //Logger::log("UCI OUT", msg);
+        }
 
         Move start_search(Position::Position& pos, int target_depth = 64, double max_time_sec = 1500.0)
         {
@@ -489,7 +494,8 @@ namespace Search {
 
             Move best_so_far = NO_MOVE;
             //int best_score_so_far = -INF;
-
+            std::string uci_output{};
+            std::string pv_string{};
             int alpha = -INF;
             int beta = +INF;
             int window = 40;
@@ -541,18 +547,20 @@ namespace Search {
                     score_str = "cp " + std::to_string(score);
                 }
 
+                pv_string = get_pv_string(pos);
                 // UCI info line
-                std::cout << std::format(
-                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv ",
+                uci_output = std::format(
+                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}",
                     depth,
                     max_sel_depth,
                     score_str,
                     nodes_visited,
                     nps,
-                    static_cast<int>(elapsed_sec * 1000)
+                    static_cast<int>(elapsed_sec * 1000),
+                    pv_string
                 );
-            
-                print_pv(std::cout, pos) << '\n' << std::flush;
+                send_uci(uci_output);
+                //Logger::log("SEARCH", uci_output);
 
                 // If time ran out during search we still have previous best move
                 if (should_stop()) break;

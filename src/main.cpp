@@ -5,9 +5,6 @@
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stdin, NULL, _IONBF, 0);
-
     if (argc > 1) {
         std::string mode = argv[1];
         if (mode == "cli") {

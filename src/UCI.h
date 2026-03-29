@@ -6,7 +6,6 @@
 #include <format>
 #include <thread>
 
-
 #include "Position.h"
 #include "Types.h"
 #include "Zobrist.h"
@@ -15,6 +14,18 @@
 
 namespace UCI {
 	using namespace Types;
+
+	std::mutex thread_mutex;
+	std::thread search_thread;
+
+	void stop_and_join() {
+		Search::Searcher::stop_signal = true;
+		if (search_thread.joinable()) {
+			search_thread.join();
+		}
+	}
+
+	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 	enum class OpType {
 		ID,
@@ -26,6 +37,7 @@ namespace UCI {
 		STOP,
 		NONE,
 	};
+
 
 	OpType parse_input(std::string_view input) {
 		if (input == "uci") return OpType::ID;
@@ -91,7 +103,7 @@ namespace UCI {
 	void handle_position(std::string_view input, Position::Position& pos) {
 		Zobrist::init();
 		if (input.find("startpos") != std::string::npos) {
-			pos.init_start_pos();
+			pos.set_fen(startpos);
 		}
 		else if (auto fen_pos = input.find("fen "); fen_pos != std::string::npos) {
 			// Find where moves start to isolate FEN
@@ -115,9 +127,10 @@ namespace UCI {
 	}
 
 	void uci_loop() {
-		Search::Searcher searcher;
-		std::thread search_thread;
+		Zobrist::init();
 		Position::Position pos;
+		Search::Searcher searcher;
+
 		OpType op{ OpType::NONE };
 		std::string input;
 		bool play{ true };
@@ -129,22 +142,26 @@ namespace UCI {
 			case OpType::ID:
 				std::cout << "id name MyChessEngine\n";
 				std::cout << "id author MyName\n";
-				std::cout << "uciok\n";
+				std::cout << "uciok\n" << std::flush;
 				break;
+
 			case OpType::ISREADY:
-				std::cout << "readyok\n";
+				std::cout << "readyok\n" << std::flush;
 				break;
+
 			case OpType::NEWGAME:
+				pos.reset();
 				Search::tt.clear();
+				Eval::pawns_cache.clear();
 				break;
+
 			case OpType::POSITION: 
-				Search::Searcher::stop_signal = true;
-				if (search_thread.joinable()) search_thread.join(); 
 				handle_position(input, pos);
 				break;
+
 			case OpType::GO: {
 				int max_depth = 64;
-				int movetime_ms = -1; // Change to -1
+				int movetime_ms = -1;
 				int wtime = -1, btime = -1, winc = 0, binc = 0;
 				int movestogo = -1;
 				// 1. Parse all potential arguments
@@ -197,30 +214,28 @@ namespace UCI {
 					time_for_move_ms = 1500000;
 				}
 
-				time_for_move_ms = std::max(20, time_for_move_ms);
-
-				std::cout << "info string allocated " << time_for_move_ms << "ms" << std::endl;
-				Search::Searcher::stop_signal = true;
-				if (search_thread.joinable()) search_thread.join();
+				time_for_move_ms = std::max(80, time_for_move_ms - 120);
+				std::cout << "info string allocated " << time_for_move_ms << "ms\n" << std::flush;
+				stop_and_join();
 
 				Search::Searcher::stop_signal = false;
 
 				search_thread = std::thread([&searcher, &pos, max_depth, time_for_move_ms]() {
 					Types::Move best_move = searcher.start_search(pos, max_depth, time_for_move_ms / 1000.0);
-					std::cout << "bestmove " << Types::move_to_string(best_move) << std::endl;
+					std::string move_str = (best_move == Types::NO_MOVE) ? "0000" : Types::move_to_string(best_move);
+					std::string out = std::format("bestmove {}\n", move_str);
+					std::cout << out << std::flush;
 					});
-			} break;
-			case OpType::STOP:
-				Search::Searcher::stop_signal = true;
-				if (search_thread.joinable()) search_thread.join();
+			}
 				break;
-
 			case OpType::QUIT:
-				Search::Searcher::stop_signal = true;
-				if (search_thread.joinable()) search_thread.join();
 				play = false;
 				break;
-			default:break;
+			case OpType::STOP:
+				stop_and_join();
+				break;
+			default:
+				break;
 			}
 		}
 	}
