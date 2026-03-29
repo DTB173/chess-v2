@@ -18,8 +18,8 @@ namespace Bitwise{
 
 	template<std::integral T>
 	inline int pop_lsb(T& bits) {
-		int s = _tzcnt_u64(bits);    // Direct hardware call
-		bits = _blsr_u64(bits);      // BMI1 hardware bit reset
+		int s = _tzcnt_u64(bits); 
+		bits = _blsr_u64(bits); 
 		return s;
 	}
 
@@ -40,7 +40,7 @@ namespace Bitwise{
 #if defined(_MSC_VER) && defined(__AVX2__)
 		return static_cast<int>(__popcnt64(bits));
 #else
-		return std::popcount(bits); // Clean fallback
+		return std::popcount(bits);
 #endif
 	}
 }
