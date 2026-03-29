@@ -283,18 +283,30 @@ namespace Position {
             return false;
         }
 
-        bool set_fen(const std::string& fen) {
-            using namespace Types;
-
-            // Clear board state
+        void reset() {
             for (int i = 0; i < 12; ++i) board[i] = 0ULL;
-            for (int i = 0; i < 64; ++i) mailbox[i] = Piece();
-
             occupancy[0] = occupancy[1] = 0ULL;
             total_pieces = 0ULL;
+
+            for (int i = 0; i < 64; ++i) mailbox[i] = Piece();
+
             king_sq[0] = king_sq[1] = Square::SQ_NONE;
 
-            metadata = Flags(); // resets bits to 0xF (all castling), clears EP, white to move, clock=0
+            metadata = Flags();
+
+            history_idx = 0;
+            std::fill(history->begin(), history->end(), StateRecord{});
+
+            current_score = Score{ 0, 0 };
+            current_phase = 0;
+
+            zobrist_key = 0;
+            pawns_key = 0;
+        }
+
+        bool set_fen(const std::string& fen, EvalInfo::EvalTrace* et = nullptr) {
+            using namespace Types;
+            reset();
 
             std::istringstream ss(fen);
             std::string token;
