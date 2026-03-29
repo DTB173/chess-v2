@@ -4,6 +4,7 @@ target_sources(chess_engine
     PRIVATE
         CLI.h
         UCI.h
+        #Logger.h
 )
 
 target_link_libraries(chess_engine
