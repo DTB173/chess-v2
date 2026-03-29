@@ -153,31 +153,32 @@ namespace Search {
         Move killer[2][MAX_PLY] = {};
         HistoryTable history = {};
 
-        std::ostream& print_pv(std::ostream& out, Position::Position& pos) {
+        std::string get_pv_string(const Position::Position& root_pos) {
+            Position::Position temp(root_pos);
+            std::string pv_str = "";
             int count = 0;
             Move pv_moves[24];
 
-            while (count < 24) {
-                ui64 key = pos.get_zobrist_key();
+            // Use a local "seen" list or just a strict depth limit to prevent infinite loops
+            while (count < 20) {
+                ui64 key = temp.get_zobrist_key();
                 TTEntry* entry = tt.probe(key);
 
-                if (!entry || entry->move == NO_MOVE || entry->depth < 1) break;
+                if (!entry || entry->move == NO_MOVE) break;
 
-                if (!pos.is_legal(entry->move)) break;
+                if (!temp.is_legal(entry->move)) break;
 
-				if (entry->age != current_age) break;
-                out << move_to_string(entry->move) << ' ';
+                pv_str += Types::move_to_string(entry->move) + " ";
 
-                pv_moves[count] = entry->move;
-                pos.make_move(entry->move);
+                temp.make_move(entry->move);
                 count++;
             }
 
-            for (int i = 0; i < count; i++) {
-                pos.undo_move();
+                // Stop if the game is over
+                if (temp.is_draw()) break;
             }
 
-            return out;
+            return pv_str;
         }
         
         int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
@@ -207,6 +208,7 @@ namespace Search {
         //Quiescence Search
         int quiescence(Position::Position& pos, int alpha, int beta, int ply) {
             nodes_visited++;
+
             if (ply > max_sel_depth) max_sel_depth = ply;
 
             auto* entry = tt.probe(pos.get_zobrist_key());
