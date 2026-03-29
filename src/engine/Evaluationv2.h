@@ -492,7 +492,6 @@ namespace Eval {
         Square ksq = pos.get_king_square(us);
         Color them = opponent_of(us);
         int king_file = Bitboards::file_of(ksq);
-        Score total = Score(0, 0);
 
         Score score{};
         for (int f = std::max(0, king_file - 1); f <= std::min(7, king_file + 1); ++f) {
@@ -670,6 +669,7 @@ namespace Eval {
 		if (entry && entry->static_eval != Constants::SCORE_NONE) {
 			return entry->static_eval;
 		}
+        }
 
         int phase = pos.get_phase();
         int psqt_score = pos.evaluate();
