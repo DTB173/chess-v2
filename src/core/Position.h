@@ -236,6 +236,11 @@ namespace Position {
 			return in_check;
         }
 
+        Move get_last_move() const {
+            if (history_idx == 0) return NO_MOVE;
+            Move m = (*history)[history_idx - 1].prev_half_move;
+            return m;
+        }
 		// zugzwang detection helper
         bool has_non_pawn_material(Color c) const {
             if (c == Color::WHITE) {

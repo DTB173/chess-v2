@@ -70,25 +70,29 @@ namespace Sort {
         using HistoryTable = int[2][64][64];
 
         MovePicker(MoveGen::MoveList& list, const Position::Position& pos, 
-            const HistoryTable& history, const std::array<Move, 2>& killers = {}, Move tt_move = Move{}) : list(list) {
+            const HistoryTable& history, const std::array<Move, 2>& killers = {}, 
+            Move tt_move = Move{}, Move counter = {}) : list(list) {
             for (size_t i = 0; i < list.size(); ++i) {
-                // If it's the move from the TT, give it a massive bonus to ensure it's first
                 Move move = list[i];
+
                 if (move == tt_move) {
-                    scores[i] = 1'000'000; // Best: TT Move 
+                    scores[i] = 1'000'000;
+                }
+                else if (move.is_capture() || move.is_promo()) {
+                    scores[i] = 80'000 + score_move(move, pos);
                 }
                 else if (move == killers[0]) {
-                    scores[i] = 9'000; // Priority Quiet 1
+                    scores[i] = 20'000;
                 }
                 else if (move == killers[1]) {
-                    scores[i] = 8'000; // Priority Quiet 2
+                    scores[i] = 19'000;
                 }
-                else if (!move.is_capture() && !move.is_promo()) {
-                    scores[i] = score_move(move, pos); // Standard: PST moves 
-                    scores[i] += std::min(8000, history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()]);
+                else if (move == counter && move != NO_MOVE) {
+                    scores[i] = 18'000;
                 }
                 else {
-                    scores[i] = score_move(move, pos); // Standard: PST moves 
+                    scores[i] = score_move(move, pos);
+                    scores[i] += std::min(8000, history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()]);
                 }
             }
         }
@@ -154,6 +158,7 @@ namespace Search {
 
         Move killer[2][MAX_PLY] = {};
         HistoryTable history = {};
+        Move countermove_table[2][64][64] = {};
 
         std::string get_pv_string(const Position::Position& root_pos) {
             Position::Position temp(root_pos);
@@ -240,7 +245,7 @@ namespace Search {
                 if (standing_pat > alpha) alpha = standing_pat;
             }
 
-            if (!in_check && standing_pat + QUEEN_VAL< alpha) {
+            if (!in_check && standing_pat + QUEEN_VAL < alpha) {
                 ui64 friendly_pawns = pos.get_bitboard(PieceType::PAWN, pos.turn());
                 constexpr ui64 RANK_7 = 0x00FF000000000000ULL;
                 constexpr ui64 RANK_2 = 0x000000000000FF00ULL;
@@ -248,7 +253,7 @@ namespace Search {
                 ui64 pawns_near_promo = (pos.turn() == Color::WHITE)
                     ? (friendly_pawns & RANK_7)
                     : (friendly_pawns & RANK_2);
-                if(!pawns_near_promo) return alpha;  // futility: even best capture can't reach alpha
+                if (!pawns_near_promo) return alpha;  // futility: even best capture can't reach alpha
             }
 
             MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures_and_promos(pos);
@@ -290,6 +295,7 @@ namespace Search {
             using TranspositionTable::NodeType;
             NodeType bound = (alpha <= old_alpha) ? NodeType::UPPER_BOUND :
                 (alpha >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
+
             tt.store(pos.get_zobrist_key(), 0, alpha, best_move, bound, ply, current_age, eval);
             return alpha;
         }
@@ -312,16 +318,31 @@ namespace Search {
             int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
             if (tt_score != NO_TT_CUTOFF && ply > 0) return tt_score;
 
+
             // 3. Quiescence at leaf
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
             // Safety cutoff
-            int static_eval = Eval::evaluate(pos, tt, current_age);
+            int static_eval = Constants::SCORE_NONE;
+            
+            static_eval = Eval::evaluate(pos, tt, current_age);
             if (ply >= 64) return static_eval;
 
             bool in_check = pos.is_in_check(pos.turn());
             
-            // Note: Ensure your evaluate() handles side-to-move correctly
+
+            TTEntry* entry = tt.probe(pos.get_zobrist_key());
+            if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
+                static_eval = entry->static_eval_;
+                if (pos.turn() == Color::BLACK)
+                    static_eval = -static_eval;
+            }
+            else {
+                static_eval = Eval::evaluate(pos, tt, current_age);
+                if (pos.turn() == Color::BLACK)
+                    static_eval = -static_eval;
+            }
+            if (ply >= 64) return static_eval;
 
             // 4. Null Move Pruning
             if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
@@ -333,8 +354,15 @@ namespace Search {
             }
             // 5. Move Generation
             std::array<Move, 2> ply_killers = { killer[0][ply], killer[1][ply] };
-            MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
-            Sort::MovePicker picker(list, pos, history, ply_killers, tt_move);
+            Move prev_move = pos.get_last_move();
+            Move counter_move = NO_MOVE;
+            if (prev_move != NO_MOVE) {
+                counter_move = countermove_table[static_cast<int>(pos.turn()) - 1][prev_move.from()][prev_move.to()];
+            }
+
+            MoveGen::MoveList list{};
+            MoveGen::generate_all_moves(pos, list);
+            Sort::MovePicker picker(list, pos, history, ply_killers, tt_move, counter_move);
             Move move;
 
             int legal_moves = 0;
@@ -424,6 +452,12 @@ namespace Search {
                 // Update Heuristics on Cutoff
                 if (best_score >= beta && !best_move.is_capture()) {
                     update_history(best_move, pos.turn(), 200 * depth);
+                    if (ply > 0) {
+                        Move prev_move = pos.get_last_move();
+                        if (prev_move != NO_MOVE) {
+                            countermove_table[static_cast<int>(pos.turn()) - 1][prev_move.from()][prev_move.to()] = best_move;
+                        }
+                    }
                     killer[1][ply] = killer[0][ply];
                     killer[0][ply] = best_move;
                 }
@@ -475,7 +509,6 @@ namespace Search {
             static std::mutex cout_mutex;
             std::lock_guard<std::mutex> lock(cout_mutex);
             std::cout << msg << std::endl;
-            //Logger::log("UCI OUT", msg);
         }
 
         Move start_search(Position::Position& pos, int target_depth = 64, double max_time_sec = 1500.0)
@@ -550,17 +583,17 @@ namespace Search {
                 pv_string = get_pv_string(pos);
                 // UCI info line
                 uci_output = std::format(
-                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}",
+                    "info depth {} seldepth {} score {} nodes {} hashfull {} nps {} time {} pv {}",
                     depth,
                     max_sel_depth,
                     score_str,
                     nodes_visited,
+                    tt.get_hashfull(),
                     nps,
                     static_cast<int>(elapsed_sec * 1000),
                     pv_string
                 );
                 send_uci(uci_output);
-                //Logger::log("SEARCH", uci_output);
 
                 // If time ran out during search we still have previous best move
                 if (should_stop()) break;
