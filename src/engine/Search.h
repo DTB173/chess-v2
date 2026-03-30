@@ -165,18 +165,17 @@ namespace Search {
             std::string pv_str = "";
             int count = 0;
 
-            // Use a local "seen" list or just a strict depth limit to prevent infinite loops
             while (count < 20) {
                 ui64 key = temp.get_zobrist_key();
                 TTEntry* entry = tt.probe(key);
 
-                if (!entry || entry->move == NO_MOVE) break;
+                if (!entry || entry->move() == NO_MOVE) break;
+                if (!temp.is_legal(entry->move())) break;
+                if (temp.is_draw()) break;
 
-                if (!temp.is_legal(entry->move)) break;
+                pv_str += Types::move_to_string(entry->move()) + " ";
 
-                pv_str += Types::move_to_string(entry->move) + " ";
-
-                temp.make_move(entry->move);
+                temp.make_move(entry->move());
                 count++;
 
                 // Stop if the game is over
@@ -186,20 +185,35 @@ namespace Search {
             return pv_str;
         }
         
-        int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
+        int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move)
+        {
             TTEntry* entry = tt.probe(zobrist);
-            if (!entry) return NO_TT_CUTOFF;
-
-            tt_move = entry->move;
-            if (entry->depth >= depth) {
-
-                int tt_score = tt.score_from_tt(entry->score, ply);
-
-                if (entry->type == TranspositionTable::EXACT) return tt_score;
-                if (entry->type == TranspositionTable::LOWER_BOUND) alpha = std::max(alpha, tt_score);
-                if (entry->type == TranspositionTable::UPPER_BOUND) beta = std::min(beta, tt_score);
-                if (alpha >= beta) return tt_score;
+            if (!entry) {
+                tt_move = NO_MOVE;
+                return NO_TT_CUTOFF;
             }
+
+            tt_move = entry->move();   // always good for move ordering
+
+            if (entry->depth_ < depth) return NO_TT_CUTOFF;   // too shallow, no cutoff
+
+            int tt_score = TranspositionTable::TT::score_from_tt(entry->score_, ply);
+
+            if (entry->type() == TranspositionTable::EXACT) return tt_score;
+
+            if (entry->type() == TranspositionTable::LOWER_BOUND) {
+                if (tt_score > alpha) {
+                    alpha = tt_score;
+                    if (alpha >= beta) return tt_score; // beta cutoff
+                }
+            }
+            else if (entry->type() == TranspositionTable::UPPER_BOUND) {
+                if (tt_score < beta) {
+                    beta = tt_score;
+                    if (alpha >= beta) return tt_score; // alpha cutoff
+                }
+            }
+
             return NO_TT_CUTOFF;
         }
 
@@ -216,14 +230,11 @@ namespace Search {
 
             if (ply > max_sel_depth) max_sel_depth = ply;
 
-            auto* entry = tt.probe(pos.get_zobrist_key());
-            if (entry && entry->depth >= 0) {  // QS depth is usually 0
-                using TranspositionTable::NodeType;
-                int tt_score = TranspositionTable::TT::score_from_tt(entry->score,ply);
-                if (entry->type == NodeType::EXACT) return tt_score;
-                if (entry->type == NodeType::LOWER_BOUND && tt_score >= beta) return tt_score;
-                if (entry->type == NodeType::UPPER_BOUND && tt_score <= alpha) return tt_score;
-            }
+            Move tt_move = NO_MOVE;
+            int tt_value = tt_lookup(pos.get_zobrist_key(), 0, ply, alpha, beta, tt_move);  // depth=0 for QS
+
+            if (tt_value != NO_TT_CUTOFF)
+                return tt_value;
 
             int old_alpha = alpha;
             int eval = Eval::evaluate(pos, tt, current_age);
@@ -423,6 +434,12 @@ namespace Search {
                 pos.undo_move();
 
                 if (time_up) return 0;
+
+                if (score <= alpha && !move.is_capture()) {
+                    if (move != killer[0][ply] && move != killer[1][ply]) {
+                        update_history(move, pos.turn(), -100 * depth);
+                    }
+                }
 
                 if (score > best_score) {
                     best_score = score;
