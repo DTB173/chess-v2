@@ -168,6 +168,9 @@ namespace Eval {
         { 500,    0}, { 500,    0}, { 500,    0}, { 500,    0}
     };
 
+
+    constexpr inline Score tempo = { 15,   15 };
+
     PawnTable::PawnTable pawns_cache(16);
 
     using M = EvalInfo::Mapper;
@@ -666,17 +669,20 @@ namespace Eval {
         if (!et) {
             ui64 key = pos.get_zobrist_key();
             auto* entry = tt.probe(key);
-            if (entry && entry->static_eval != Constants::SCORE_NONE) {
-                return entry->static_eval;
+            if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
+                return entry->static_eval_;
             }
         }
 
         int phase = pos.get_phase();
         int psqt_score = pos.evaluate();
         Score total_score = evaluate_pieces(pos, et);
- 
+        total_score += tempo;
         int final_eval = total_score.eval(phase) + psqt_score;
 
+        if (et) {
+            et->add((size_t)M::Tempo, (pos.turn() == Color::WHITE) ? 1 : -1);
+        }
         if(!et) tt.store_eval(pos.get_zobrist_key(), static_cast<i16>(final_eval), current_age);
         if (et) return final_eval * (pos.turn() == Color::WHITE) ? 1 : -1;
         return final_eval;
