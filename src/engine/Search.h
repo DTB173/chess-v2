@@ -154,24 +154,24 @@ namespace Search {
 
         Move killer[2][MAX_PLY] = {};
         HistoryTable history = {};
+        Move countermove_table[2][64][64] = {};
 
         std::string get_pv_string(const Position::Position& root_pos) {
             Position::Position temp(root_pos);
             std::string pv_str = "";
             int count = 0;
 
-            // Use a local "seen" list or just a strict depth limit to prevent infinite loops
             while (count < 20) {
                 ui64 key = temp.get_zobrist_key();
                 TTEntry* entry = tt.probe(key);
 
-                if (!entry || entry->move == NO_MOVE) break;
+                if (!entry || entry->move() == NO_MOVE) break;
 
-                if (!temp.is_legal(entry->move)) break;
+                if (!temp.is_legal(entry->move())) break;
 
-                pv_str += Types::move_to_string(entry->move) + " ";
+                pv_str += Types::move_to_string(entry->move()) + " ";
 
-                temp.make_move(entry->move);
+                temp.make_move(entry->move());
                 count++;
 
                 // Stop if the game is over
@@ -181,20 +181,39 @@ namespace Search {
             return pv_str;
         }
         
-        int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move) {
+        int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move)
+        {
             TTEntry* entry = tt.probe(zobrist);
-            if (!entry) return NO_TT_CUTOFF;
-
-            tt_move = entry->move;
-            if (entry->depth >= depth) {
-
-                int tt_score = tt.score_from_tt(entry->score, ply);
-
-                if (entry->type == TranspositionTable::EXACT) return tt_score;
-                if (entry->type == TranspositionTable::LOWER_BOUND) alpha = std::max(alpha, tt_score);
-                if (entry->type == TranspositionTable::UPPER_BOUND) beta = std::min(beta, tt_score);
-                if (alpha >= beta) return tt_score;
+            if (!entry) {
+                tt_move = NO_MOVE;
+                return NO_TT_CUTOFF;
             }
+
+            tt_move = entry->move();   // always good for move ordering
+
+            if (entry->depth_ < depth)
+                return NO_TT_CUTOFF;   // too shallow, no cutoff
+
+            int tt_score = TranspositionTable::TT::score_from_tt(entry->score_, ply);
+
+            if (entry->type() == TranspositionTable::EXACT)
+                return tt_score;
+
+            if (entry->type() == TranspositionTable::LOWER_BOUND) {
+                if (tt_score > alpha) {
+                    alpha = tt_score;
+                    if (alpha >= beta)
+                        return tt_score;        // beta cutoff
+            }
+            }
+            else if (entry->type() == TranspositionTable::UPPER_BOUND) {
+                if (tt_score < beta) {
+                    beta = tt_score;
+                    if (alpha >= beta)
+                        return tt_score;        // alpha cutoff
+                }
+            }
+
             return NO_TT_CUTOFF;
         }
 
@@ -211,14 +230,11 @@ namespace Search {
 
             if (ply > max_sel_depth) max_sel_depth = ply;
 
-            auto* entry = tt.probe(pos.get_zobrist_key());
-            if (entry && entry->depth >= 0) {  // QS depth is usually 0
-                using TranspositionTable::NodeType;
-                int tt_score = TranspositionTable::TT::score_from_tt(entry->score,ply);
-                if (entry->type == NodeType::EXACT) return tt_score;
-                if (entry->type == NodeType::LOWER_BOUND && tt_score >= beta) return tt_score;
-                if (entry->type == NodeType::UPPER_BOUND && tt_score <= alpha) return tt_score;
-            }
+            Move tt_move = NO_MOVE;
+            int tt_value = tt_lookup(pos.get_zobrist_key(), 0, ply, alpha, beta, tt_move);  // depth=0 for QS
+
+            if (tt_value != NO_TT_CUTOFF)
+                return tt_value;
 
             int old_alpha = alpha;
             int eval = Eval::evaluate(pos, tt, current_age);
@@ -251,8 +267,9 @@ namespace Search {
                 if(!pawns_near_promo) return alpha;  // futility: even best capture can't reach alpha
             }
 
-            MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures_and_promos(pos);
-            Sort::MovePicker picker(list, pos, history);
+            MoveGen::MoveList moves;
+            in_check ? MoveGen::generate_all_moves(pos, moves) : MoveGen::generate_captures_and_promos(pos, moves);
+            Sort::MovePicker picker(moves, pos, history);
             Move move{};
             Move best_move{};
             int legal_moves{};
@@ -290,6 +307,7 @@ namespace Search {
             using TranspositionTable::NodeType;
             NodeType bound = (alpha <= old_alpha) ? NodeType::UPPER_BOUND :
                 (alpha >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
+
             tt.store(pos.get_zobrist_key(), 0, alpha, best_move, bound, ply, current_age, eval);
             return alpha;
         }
@@ -312,6 +330,7 @@ namespace Search {
             int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
             if (tt_score != NO_TT_CUTOFF && ply > 0) return tt_score;
 
+            
             // 3. Quiescence at leaf
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
@@ -321,8 +340,22 @@ namespace Search {
 
             bool in_check = pos.is_in_check(pos.turn());
             
-            // Note: Ensure your evaluate() handles side-to-move correctly
+            // Safety cutoff
+            int static_eval = Constants::SCORE_NONE;
 
+            TTEntry* entry = tt.probe(pos.get_zobrist_key());
+            if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
+                static_eval = entry->static_eval_;
+                if (pos.turn() == Color::BLACK)
+                    static_eval = -static_eval;
+            }
+            else {
+                static_eval = Eval::evaluate(pos, tt, current_age);
+                if (pos.turn() == Color::BLACK)
+                    static_eval = -static_eval;
+            }
+            if (ply >= 64) return static_eval;
+            
             // 4. Null Move Pruning
             if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
                 int R = 2 + depth / 3;
@@ -333,7 +366,14 @@ namespace Search {
             }
             // 5. Move Generation
             std::array<Move, 2> ply_killers = { killer[0][ply], killer[1][ply] };
-            MoveGen::MoveList list = MoveGen::generate_all_moves(pos);
+            Move prev_move = pos.get_last_move();
+            Move counter_move = NO_MOVE;
+            if (prev_move != NO_MOVE) {
+                counter_move = countermove_table[static_cast<int>(pos.turn()) - 1][prev_move.from()][prev_move.to()];
+            }
+
+            MoveGen::MoveList list{};
+            MoveGen::generate_all_moves(pos, list);
             Sort::MovePicker picker(list, pos, history, ply_killers, tt_move);
             Move move;
 
@@ -396,6 +436,12 @@ namespace Search {
 
                 if (time_up) return 0;
 
+                if (score <= alpha && !move.is_capture()) {
+                    if (move != killer[0][ply] && move != killer[1][ply]) {
+                        update_history(move, pos.turn(), -100 * depth);
+                    }
+                }
+
                 if (score > best_score) {
                     best_score = score;
                     best_move = move;
@@ -424,6 +470,10 @@ namespace Search {
                 // Update Heuristics on Cutoff
                 if (best_score >= beta && !best_move.is_capture()) {
                     update_history(best_move, pos.turn(), 200 * depth);
+                    if (ply > 0) {
+                        Move prev_move = pos.get_last_move();
+                        countermove_table[static_cast<int>(pos.turn()) - 1][prev_move.from()][prev_move.to()] = best_move;
+                    }
                     killer[1][ply] = killer[0][ply];
                     killer[0][ply] = best_move;
                 }
@@ -475,7 +525,6 @@ namespace Search {
             static std::mutex cout_mutex;
             std::lock_guard<std::mutex> lock(cout_mutex);
             std::cout << msg << std::endl;
-            //Logger::log("UCI OUT", msg);
         }
 
         Move start_search(Position::Position& pos, int target_depth = 64, double max_time_sec = 1500.0)
@@ -550,11 +599,12 @@ namespace Search {
                 pv_string = get_pv_string(pos);
                 // UCI info line
                 uci_output = std::format(
-                    "info depth {} seldepth {} score {} nodes {} nps {} time {} pv {}",
+                    "info depth {} seldepth {} score {} nodes {} hashfull {} nps {} time {} pv {}",
                     depth,
                     max_sel_depth,
                     score_str,
                     nodes_visited,
+                    tt.get_hashfull(),
                     nps,
                     static_cast<int>(elapsed_sec * 1000),
                     pv_string

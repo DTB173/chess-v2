@@ -220,6 +220,11 @@ namespace Position {
             return occupancy[static_cast<int>(c) - 1];
 		}
         inline ui64 get_total_occupancy()const { return total_pieces; }
+        Move get_last_move() const {
+            if (history_idx == 0) return NO_MOVE;
+            Move m = (*history)[history_idx - 1].prev_half_move;
+            return m;
+        }
         inline int half_move_count()const { return history_idx - 1; }
         inline bool is_legal(Move m) {
             Color us = turn(); // get 'us' before, make_move toogles turn
