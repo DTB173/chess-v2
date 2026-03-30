@@ -155,7 +155,7 @@ namespace UCI {
 				Eval::pawns_cache.clear();
 				break;
 
-			case OpType::POSITION: 
+			case OpType::POSITION:
 				handle_position(input, pos);
 				break;
 
@@ -202,7 +202,7 @@ namespace UCI {
 					time_for_move_ms = (int)(base_time + (inc * 0.9));
 
 					// 3. Middle Game "Combat" Bonus (Moves 10-30)
-					
+
 					if (current_move >= 10 && current_move <= 30) {
 						time_for_move_ms = (int)(time_for_move_ms * 1.25);
 					}
@@ -227,8 +227,9 @@ namespace UCI {
 					std::cout << out << std::flush;
 					});
 			}
-				break;
+						   break;
 			case OpType::QUIT:
+				stop_and_join();
 				play = false;
 				break;
 			case OpType::STOP:

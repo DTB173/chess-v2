@@ -17,7 +17,7 @@ namespace CLI {
 	constexpr const char* test = "8/8/8/8/8/8/ppp5/K6k b - - 0 1";
 
 	using namespace Types;
-	enum class OpType{
+	enum class OpType {
 		PLAY,
 		PRINT,
 		QUIT,
@@ -99,7 +99,7 @@ namespace CLI {
 		}
 		pos.print(std::cout);
 		bool playing{ true };
-		OpType operation{OpType::NONE};
+		OpType operation{ OpType::NONE };
 		std::string input;
 		int move_count = 0;
 		while (playing) {
@@ -110,7 +110,7 @@ namespace CLI {
 				pos.print(std::cout);
 				++move_count;
 			}
-				
+
 			std::cout << ">> ";
 			std::getline(std::cin, input);
 			operation = parse_input(input);
@@ -122,7 +122,7 @@ namespace CLI {
 			case OpType::PRINT:pos.print(std::cout); break;
 			case OpType::PLAY: {
 				std::string cmd, arg;
-				if (auto space_pos = input.find(' '); space_pos!=std::string::npos) {
+				if (auto space_pos = input.find(' '); space_pos != std::string::npos) {
 					cmd = input.substr(0, space_pos);
 					arg = input.substr(space_pos + 1);
 					Types::Move m = parse_move(arg.data(), pos);
@@ -136,7 +136,7 @@ namespace CLI {
 					pos.print(std::cout);
 				}
 				else {
-					std::cerr << "Invalid move notation, command was: " << cmd << "arg was: "<< arg<<'\n';
+					std::cerr << "Invalid move notation, command was: " << cmd << "arg was: " << arg << '\n';
 				}
 			}break;
 			case OpType::MOVES: {
@@ -152,7 +152,8 @@ namespace CLI {
 				}
 			}break;
 			case OpType::LIST: {
-				auto moves = MoveGen::generate_all_moves(pos);
+				MoveGen::MoveList moves{};
+				MoveGen::generate_all_moves(pos, moves);
 				std::cout << "Legal moves:\n";
 				for (const auto& m : moves) {
 					Types::Color us = pos.get_metadata().side_to_move();
@@ -169,7 +170,6 @@ namespace CLI {
 					arg = input.substr(space_pos + 1);
 					int depth = std::stoi(arg);
 					Perft::divide(pos, depth);
-
 				}
 			} break;
 			default:std::cout << "Unknown command.\n";

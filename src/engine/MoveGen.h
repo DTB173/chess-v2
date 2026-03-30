@@ -272,38 +272,32 @@ namespace MoveGen {
 		generate_king_moves<T>(pos, moves);
 	}
 
-	[[nodiscard]] MoveList generate_captures(const Position::Position& pos) {
-		MoveList moves{};
+	void generate_captures(const Position::Position& pos, MoveList& moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
-		return moves;
 	}
 
-	[[nodiscard]] MoveList generate_captures_and_promos(const Position::Position& pos) {
-		MoveList moves{};
+	void generate_captures_and_promos(const Position::Position& pos, MoveList& moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 		generate_quiet_promotions(pos, moves);
-		return moves;
 	}
-	[[nodiscard]] MoveList generate_quiets(const Position::Position & pos) {
-		MoveList moves{};
+	void generate_quiets(const Position::Position & pos, MoveList& moves) {
 		generate_moves<MoveType::QUIET>(pos, moves);
-		return moves;
 	}
 
-	[[nodiscard]] MoveList generate_all_moves(const Position::Position & pos) {
-		MoveList moves{};
+	void generate_all_moves(const Position::Position & pos, MoveList& moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 		generate_moves<MoveType::QUIET>(pos, moves);
-		return moves;
 	}
 
 	bool has_legal_moves(Position::Position& pos) {
-		auto captures = MoveGen::generate_captures(pos);
+		MoveList captures{};
+		MoveGen::generate_captures(pos, captures);
 		for (auto move : captures) {
 			if (pos.is_legal(move)) return true;
 		}
 
-		auto quiets = MoveGen::generate_quiets(pos);
+		MoveList quiets{};
+		MoveGen::generate_quiets(pos, quiets);
 		for (auto move : quiets) {
 			if (pos.is_legal(move)) return true;
 		}

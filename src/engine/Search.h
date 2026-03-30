@@ -20,7 +20,7 @@
 //#include "../Logger.h"
 
 namespace Sort {
-	using namespace Types;
+    using namespace Types;
 
     constexpr int MVV_LVA[7][7] = {
         {0,  0,  0,  0,  0,  0,  0}, // No Victim
@@ -69,7 +69,7 @@ namespace Sort {
     public:
         using HistoryTable = int[2][64][64];
 
-        MovePicker(MoveGen::MoveList& list, const Position::Position& pos, 
+        MovePicker(MoveGen::MoveList& list, const Position::Position& pos,
             const HistoryTable& history, const std::array<Move, 2>& killers = {}, 
             Move tt_move = Move{}, Move counter = {}) : list(list) {
             for (size_t i = 0; i < list.size(); ++i) {
@@ -104,9 +104,9 @@ namespace Sort {
                 }
             }
             return NO_MOVE;
-		}
+        }
     private:
-		// Selection sort style picker: each call to next() finds the best remaining move
+        // Selection sort style picker: each call to next() finds the best remaining move
         Types::Move next() {
             if (current_idx >= list.size()) return NO_MOVE;
 
@@ -184,7 +184,7 @@ namespace Search {
 
             return pv_str;
         }
-        
+
         int tt_lookup(ui64 zobrist, int depth, int ply, int& alpha, int& beta, Move& tt_move)
         {
             TTEntry* entry = tt.probe(zobrist);
@@ -267,8 +267,9 @@ namespace Search {
                 if (!pawns_near_promo) return alpha;  // futility: even best capture can't reach alpha
             }
 
-            MoveGen::MoveList list = in_check ? MoveGen::generate_all_moves(pos) : MoveGen::generate_captures_and_promos(pos);
-            Sort::MovePicker picker(list, pos, history);
+            MoveGen::MoveList moves;
+            in_check ? MoveGen::generate_all_moves(pos, moves) : MoveGen::generate_captures_and_promos(pos, moves);
+            Sort::MovePicker picker(moves, pos, history);
             Move move{};
             Move best_move{};
             int legal_moves{};
@@ -292,7 +293,7 @@ namespace Search {
                 if (score >= beta) {
                     tt.store(pos.get_zobrist_key(), 0, beta, move, TranspositionTable::NodeType::LOWER_BOUND, ply, current_age, eval);
                     return beta;
-                } 
+                }
                 if (score > alpha) {
                     alpha = score;
                     best_move = move;
@@ -340,7 +341,7 @@ namespace Search {
             if (ply >= 64) return static_eval;
 
             bool in_check = pos.is_in_check(pos.turn());
-            
+
 
             TTEntry* entry = tt.probe(pos.get_zobrist_key());
             if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
