@@ -14,7 +14,8 @@ namespace Perft
 
     ui64 perft(Position::Position& pos, int depth, bool bulk_count = true) {
         // Generate moves for the current position
-        auto moves = MoveGen::generate_all_moves(pos);
+        MoveGen::MoveList moves;
+        MoveGen::generate_all_moves(pos, moves);
 
         // 1. BULK COUNTING OPTIMIZATION
         // If we are at depth 1 and bulk_count is enabled, we need to return
@@ -63,7 +64,8 @@ namespace Perft
     }
 
     void divide(Position::Position& pos, int depth) {
-        auto moves = MoveGen::generate_all_moves(pos);
+        MoveGen::MoveList moves{};
+        MoveGen::generate_all_moves(pos, moves);
         ui64 total_nodes = 0;
         for (const auto& m : moves) {
             Color us = pos.get_metadata().side_to_move();

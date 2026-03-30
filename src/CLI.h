@@ -152,7 +152,8 @@ namespace CLI {
 				}
 			}break;
 			case OpType::LIST: {
-				auto moves = MoveGen::generate_all_moves(pos);
+				MoveGen::MoveList moves;
+				MoveGen::generate_all_moves(pos, moves);
 				std::cout << "Legal moves:\n";
 				for (const auto& m : moves) {
 					Types::Color us = pos.get_metadata().side_to_move();

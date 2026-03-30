@@ -69,7 +69,7 @@ namespace Sort {
     public:
         using HistoryTable = int[2][64][64];
 
-        MovePicker(MoveGen::MoveList& list, const Position::Position& pos, 
+        MovePicker(MoveGen::MoveList& list, const Position::Position& pos,
             const HistoryTable& history, const std::array<Move, 2>& killers = {}, Move tt_move = Move{}) : list(list) {
             for (size_t i = 0; i < list.size(); ++i) {
                 // If it's the move from the TT, give it a massive bonus to ensure it's first
@@ -100,9 +100,9 @@ namespace Sort {
                 }
             }
             return NO_MOVE;
-		}
+        }
     private:
-		// Selection sort style picker: each call to next() finds the best remaining move
+        // Selection sort style picker: each call to next() finds the best remaining move
         Types::Move next() {
             if (current_idx >= list.size()) return NO_MOVE;
 
@@ -204,7 +204,7 @@ namespace Search {
                     alpha = tt_score;
                     if (alpha >= beta)
                         return tt_score;        // beta cutoff
-            }
+                }
             }
             else if (entry->type() == TranspositionTable::UPPER_BOUND) {
                 if (tt_score < beta) {
@@ -227,7 +227,6 @@ namespace Search {
         //Quiescence Search
         int quiescence(Position::Position& pos, int alpha, int beta, int ply) {
             nodes_visited++;
-
             if (ply > max_sel_depth) max_sel_depth = ply;
 
             Move tt_move = NO_MOVE;
@@ -334,15 +333,11 @@ namespace Search {
             // 3. Quiescence at leaf
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
-            // Safety cutoff
-            int static_eval = Eval::evaluate(pos, tt, current_age);
-            if (ply >= 64) return static_eval;
-
             bool in_check = pos.is_in_check(pos.turn());
-            
+
             // Safety cutoff
             int static_eval = Constants::SCORE_NONE;
-
+            
             TTEntry* entry = tt.probe(pos.get_zobrist_key());
             if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
                 static_eval = entry->static_eval_;

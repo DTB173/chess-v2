@@ -229,6 +229,7 @@ namespace UCI {
 			}
 				break;
 			case OpType::QUIT:
+				stop_and_join();
 				play = false;
 				break;
 			case OpType::STOP:
