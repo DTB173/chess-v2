@@ -312,8 +312,8 @@ namespace Eval {
 	int evaluate(const Position::Position& pos, TT& tt, ui8 current_age) {
 		ui64 key = pos.get_zobrist_key();
 		auto* entry = tt.probe(key);
-		if (entry && entry->static_eval != Constants::SCORE_NONE) {
-			return entry->static_eval;
+		if (entry && entry->static_eval_ != Constants::SCORE_NONE) {
+			return entry->static_eval_;
 		}
 
         ui64 pawn_key = pos.get_pawn_key();
