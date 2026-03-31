@@ -16,7 +16,7 @@
 #include "PSQTables.h"
 #include "TranspositionTable.h"
 #include "See.h"
-#include "Evaluation.h"
+#include "Evaluationv2.h"
 //#include "../Logger.h"
 
 namespace Sort {
@@ -256,7 +256,7 @@ namespace Search {
                 return tt_value;
 
             int old_alpha = alpha;
-            int eval = Eval::evaluate(pos, tt, current_age);
+            int eval = Eval::evaluate<false>(pos, tt, current_age);
             if (pos.turn() == Color::BLACK) {
                 eval = -eval;
             }
@@ -349,19 +349,16 @@ namespace Search {
             int tt_score = tt_lookup(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_move);
             if (tt_score != NO_TT_CUTOFF && ply > 0) return tt_score;
 
-
             // 3. Quiescence at leaf
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
             // Safety cutoff
             int static_eval = Constants::SCORE_NONE;
             
-            static_eval = Eval::evaluate(pos, tt, current_age);
+            static_eval = Eval::evaluate<false>(pos, tt, current_age);
             if (ply >= 64) return static_eval;
 
             bool in_check = pos.is_in_check(pos.turn());
-
-            if (ply >= 64) return static_eval;
 
             // 4. Null Move Pruning
             if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
@@ -395,6 +392,7 @@ namespace Search {
                         return 0; // return last known evaluation
                     }
                 }
+
                 pos.make_move(move);
 
                 int score;
