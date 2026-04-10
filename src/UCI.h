@@ -5,12 +5,13 @@
 #include <sstream>
 #include <format>
 #include <thread>
+#include <mutex>
 
 #include "Position.h"
 #include "Types.h"
 #include "Zobrist.h"
 #include "Perft.h"
-#include "Search.h"
+#include "Searchv2.h"
 
 namespace UCI {
 	using namespace Types;
@@ -37,7 +38,6 @@ namespace UCI {
 		STOP,
 		NONE,
 	};
-
 
 	OpType parse_input(std::string_view input) {
 		if (input == "uci") return OpType::ID;
@@ -221,13 +221,14 @@ namespace UCI {
 				Search::Searcher::stop_signal = false;
 
 				search_thread = std::thread([&searcher, &pos, max_depth, time_for_move_ms]() {
-					Types::Move best_move = searcher.start_search(pos, max_depth, time_for_move_ms / 1000.0);
+					Types::Move best_move = searcher.start_search(pos, max_depth, time_for_move_ms);
 					std::string move_str = (best_move == Types::NO_MOVE) ? "0000" : Types::move_to_string(best_move);
 					std::string out = std::format("bestmove {}\n", move_str);
 					std::cout << out << std::flush;
-					});
+					}
+				);
 			}
-						   break;
+			break;
 			case OpType::QUIT:
 				stop_and_join();
 				play = false;

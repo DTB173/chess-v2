@@ -198,7 +198,7 @@ namespace Position {
             king_sq[1] = other.king_sq[1];
         }
 
-		// prevent accidental copying
+		// prevent accidental copying, allowed to setup for lazy smp
 		//Position(const Position& other) = delete;
 		//Position& operator=(const Position& other) = delete;
 
@@ -217,7 +217,7 @@ namespace Position {
         }
 
 		inline ui64 get_occupancy(Color c) const {
-            return occupancy[static_cast<int>(c) - 1];
+            return occupancy[static_cast<size_t>(c) - 1];
 		}
         inline ui64 get_total_occupancy()const { return total_pieces; }
         inline int half_move_count()const { return history_idx - 1; }
@@ -760,7 +760,7 @@ namespace Position {
             return targets;
         }
 
-        void highlight_attacks(std::ostream& out, Square sq) {
+        void highlight_attacks(std::ostream& out, Square sq) const {
             ui64 attacks = get_highlight_bitboard(sq);
             print_attacks(out, attacks);
         }

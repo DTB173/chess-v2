@@ -9,7 +9,9 @@ target_sources(engine
     INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/MoveGen.h
         ${CMAKE_CURRENT_SOURCE_DIR}/Perft.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/Search.h
+        #${CMAKE_CURRENT_SOURCE_DIR}/Search.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/Searchv2.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/MovePick.h
         ${CMAKE_CURRENT_SOURCE_DIR}/TranspositionTable.h
         ${CMAKE_CURRENT_SOURCE_DIR}/See.h
         ${CMAKE_CURRENT_SOURCE_DIR}/Evaluationv2.h

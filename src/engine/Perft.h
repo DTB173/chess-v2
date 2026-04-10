@@ -14,7 +14,7 @@ namespace Perft
 
     ui64 perft(Position::Position& pos, int depth, bool bulk_count = true) {
         // Generate moves for the current position
-        MoveGen::MoveList moves{};
+        MoveGen::MoveList moves;
         MoveGen::generate_all_moves(pos, moves);
 
         // 1. BULK COUNTING OPTIMIZATION
@@ -23,12 +23,13 @@ namespace Perft
         if (depth == 1 && bulk_count) {
             ui64 count = 0;
             for (const auto& m : moves) {
-                Color us = pos.get_metadata().side_to_move();
+                Color us = pos.turn();
                 pos.make_move(m);
                 // Only count if the move didn't leave the king in check
-                if (!pos.is_square_attacked(pos.get_king_square(us), us)) {
+                if (!pos.is_in_check(us)) {
                     count++;
                 }
+
                 pos.undo_move();
             }
             return count;
@@ -40,11 +41,11 @@ namespace Perft
         // 3. RECURSIVE STEP
         ui64 nodes = 0;
         for (const auto& m : moves) {
-            Color us = pos.get_metadata().side_to_move();
+            Color us = pos.turn();
             pos.make_move(m);
 
             // Legal move check
-            if (!pos.is_square_attacked(pos.get_king_square(us), us)) {
+            if (!pos.is_in_check(pos.turn())) {
                 nodes += perft(pos, depth - 1, bulk_count);
             }
 
@@ -58,13 +59,14 @@ namespace Perft
         Zobrist::init();
         Position::Position pos; 
         constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
         pos.set_fen(startpos);
         
         return perft(pos, depth, bulk);
     }
 
     void divide(Position::Position& pos, int depth) {
-        MoveGen::MoveList moves{};
+        MoveGen::MoveList moves;
         MoveGen::generate_all_moves(pos, moves);
         ui64 total_nodes = 0;
         for (const auto& m : moves) {

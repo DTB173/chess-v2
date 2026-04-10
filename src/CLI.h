@@ -10,11 +10,12 @@
 #include "Zobrist.h"
 #include "MoveGen.h"
 #include "Perft.h"
-#include "Search.h"
+#include "Searchv2.h"
 
 namespace CLI {
 	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 	constexpr const char* test = "8/8/8/8/8/8/ppp5/K6k b - - 0 1";
+	constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
 
 	using namespace Types;
 	enum class OpType {
@@ -93,7 +94,7 @@ namespace CLI {
 		Zobrist::init();
 		Search::Searcher searcher;
 		Position::Position pos;
-		if (!pos.set_fen(startpos)) {
+		if (!pos.set_fen(kiwipete)) {
 			std::cerr << "Error laoding fen\n";
 			return;
 		}

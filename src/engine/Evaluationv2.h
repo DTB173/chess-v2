@@ -694,6 +694,7 @@ namespace Eval {
 
         if constexpr (!Trace) tt.store_eval(pos.get_zobrist_key(), static_cast<i16>(final_eval), current_age);
         if constexpr (Trace) return final_eval * (pos.turn() == Color::WHITE) ? 1 : -1;
-        return final_eval;
+
+        return final_eval * ((pos.turn() == Color::WHITE) ? 1 : -1);
 	}
 }

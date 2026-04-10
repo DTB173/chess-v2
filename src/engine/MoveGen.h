@@ -14,7 +14,7 @@ namespace MoveGen {
 
 	class MoveList {
 	private:
-		std::array<Move, MAX_MOVES> moves{};
+		std::array<Move, MAX_MOVES> moves;
 		size_t count{ };
 	public:
 		using iterator = decltype(moves.begin());
@@ -77,8 +77,8 @@ namespace MoveGen {
 			int base = is_capture ? MoveFlags::Capture : MoveFlags::Quiet;
 			list.push_back(Move(from, to, base | MoveFlags::PromoQueen));
 			list.push_back(Move(from, to, base | MoveFlags::PromoKnight));
-			//list.push_back(Move(from, to, base | MoveFlags::PromoRook));
-			//list.push_back(Move(from, to, base | MoveFlags::PromoBishop));
+			list.push_back(Move(from, to, base | MoveFlags::PromoRook));
+			list.push_back(Move(from, to, base | MoveFlags::PromoBishop));
 		}
 	}
 
@@ -217,7 +217,7 @@ namespace MoveGen {
 
 	template<MoveType T>
 	void generate_king_moves(const Position::Position& pos, MoveList& moves) {
-		Color us    = pos.get_metadata().side_to_move();
+		Color us = pos.turn();
 		ui64  empty = ~(pos.get_occupancy(Color::WHITE) | pos.get_occupancy(Color::BLACK));
 		ui64  enemy = pos.get_occupancy(opponent_of(us));
 		ui64  kings = pos.get_bitboard(PieceType::KING, us);
@@ -238,27 +238,20 @@ namespace MoveGen {
 	}
 
 	void generate_quiet_promotions(const Position::Position& pos, MoveList& moves) {
-		constexpr ui64 RANK_1 = 0x00000000000000FFULL; // promo black
-		constexpr ui64 RANK_8 = 0xFF00000000000000ULL; // promo white
+		constexpr ui64 RANK_1 = 0x00000000000000FFULL;
+		constexpr ui64 RANK_8 = 0xFF00000000000000ULL;
 
-		ui64 us_pawns = pos.get_bitboard(PieceType::PAWN, pos.turn());
+		Color us = pos.turn();
+		ui64 us_pawns = pos.get_bitboard(PieceType::PAWN, us);
 		ui64 empty = ~pos.get_total_occupancy();
 
-		// For White: Shift up 8, check if empty and on 8th rank
-		if (pos.turn() == Color::WHITE) {
-			ui64 promo_pushes = (us_pawns << 8) & empty & RANK_8;
-			while (promo_pushes) {
-				int to = Bitwise::pop_lsb(promo_pushes);
-				// We only care about Queen promos in QS for speed
-				moves.push_back(Move(to - 8, to, MoveFlags::PromoQueen));
-			}
+		if (us == Color::WHITE) {
+			ui64 targets = (us_pawns << 8) & empty & RANK_8;
+			serialize_promotions_relative(moves, targets, 8, false);
 		}
-		else { // For Black: Shift down 8
-			ui64 promo_pushes = (us_pawns >> 8) & empty & RANK_1;
-			while (promo_pushes) {
-				int to = Bitwise::pop_lsb(promo_pushes);
-				moves.push_back(Move(to + 8, to, MoveFlags::PromoQueen));
-			}
+		else {
+			ui64 targets = (us_pawns >> 8) & empty & RANK_1;
+			serialize_promotions_relative(moves, targets, -8, false);
 		}
 	}
 
@@ -272,21 +265,20 @@ namespace MoveGen {
 		generate_king_moves<T>(pos, moves);
 	}
 
-	void generate_captures(const Position::Position& pos, MoveList& moves) {
+	void generate_captures(const Position::Position& pos, MoveList& __restrict moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 	}
 
-	void generate_captures_and_promos(const Position::Position& pos, MoveList& moves) {
+	void generate_captures_and_promos(const Position::Position& pos, MoveList& __restrict moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 		generate_quiet_promotions(pos, moves);
 	}
-	void generate_quiets(const Position::Position & pos, MoveList& moves) {
+	void generate_quiets(const Position::Position & pos, MoveList& __restrict moves) {
 		generate_moves<MoveType::QUIET>(pos, moves);
 	}
 
-	void generate_all_moves(const Position::Position & pos, MoveList& moves) {
-		generate_moves<MoveType::CAPTURE>(pos, moves);
-		generate_moves<MoveType::QUIET>(pos, moves);
+	void generate_all_moves(const Position::Position & pos, MoveList& __restrict moves) {
+		generate_moves<MoveType::ALL>(pos, moves);
 	}
 
 	bool has_legal_moves(Position::Position& pos) {
