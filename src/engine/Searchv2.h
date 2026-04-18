@@ -17,8 +17,8 @@
 namespace Search {
 
 	namespace Search_Constants {
-		constexpr int INF      = 32001;
-		constexpr int MATE_VAL = 32000;
+		constexpr int INF      = 32'001;
+		constexpr int MATE_VAL = 32'000;
 		constexpr int MAX_PLY  = 64;
 
 		constexpr int TT_SIZE_MB = 256;
@@ -27,6 +27,7 @@ namespace Search {
 	using namespace Types;
 	using MoveGen::MoveList;
 
+	using KillerArr = std::array<std::array<Move, Search_Constants::MAX_PLY>, 2>;
 	TranspositionTable::TT tt(Search_Constants::TT_SIZE_MB);
 
 	class Searcher {
@@ -36,6 +37,7 @@ namespace Search {
 	private:
 		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta);
 		int quiescence(Position::Position& pos, int alpha, int beta, int ply);
+
 		bool probe_tt(ui64 key, int depth, int ply, int alpha, int beta, int& tt_score, Move& tt_move);
 		void store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval);
 
@@ -47,6 +49,8 @@ namespace Search {
 		void send_uci(int depth, int score, Move best_so_far) const;
 
 	private:
+		KillerArr killers{};
+
 		std::chrono::steady_clock::time_point search_start{};
 		double max_time_ms{};
 		bool time_up{};
@@ -220,9 +224,11 @@ namespace Search {
 		if (ply >= 64) return static_eval;
 
 		// 4. ============ Move generation ==========
+		std::array<Move,2> ply_killers = { killers[0][ply], killers[1][ply] };
+
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
-		Pick::Picker mp(pos, moves, tt_move);
+		Pick::Picker mp(pos, moves, tt_move, ply_killers);
 
 		// 5. ========== Main search setup ==========
 		Move best_move{};
@@ -259,6 +265,13 @@ namespace Search {
 			return in_check ? -Search_Constants::MATE_VAL + ply : 0;
 		}
 
+		// Update Heuristics on Cutoff
+		if (best_score >= beta && !best_move.is_capture()) {
+
+			killers[1][ply] = killers[0][ply];
+			killers[0][ply] = best_move;
+		}
+
 		store_tt(pos.get_zobrist_key(), depth, ply, best_score, alpha_orig, beta, best_move, static_eval);
 		return best_score;
 	}
@@ -278,6 +291,12 @@ namespace Search {
 		int alpha = -Search_Constants::INF;
 		int beta = +Search_Constants::INF;
 
+		// fallback if we cant find a good move in given time
+		MoveList moves;
+		MoveGen::generate_all_moves(pos, moves);
+		Pick::Picker initial_picker(pos, moves, NO_MOVE);
+		best_move_root = initial_picker.next_legal(pos);
+
 		for (int depth = 1; depth <= target_depth; ++depth) {
 
 			// Early exit before starting expensive iteration
@@ -286,7 +305,7 @@ namespace Search {
 			// Search start and updates
 			int score = negamax(pos, depth, 0, alpha, beta);
 
-			if (should_stop()) break;
+			if (should_stop() && depth > 1) break;
 
 			best_so_far = (best_move_root != NO_MOVE) ? best_move_root : NO_MOVE;
 

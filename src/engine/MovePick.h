@@ -22,7 +22,7 @@ namespace Pick {
         {0,  0,  0,  0,  0,  0,  0}  // Victim King
     };
 
-    int score_move(const Position::Position& pos, Move move, Move tt_move){
+    int score_move(const Position::Position& pos, Move move, Move tt_move, std::array<Move, 2> ply_killers = {}){
         if (move == tt_move) {
             return 1'000'000;                  // TT move always searched first
         }
@@ -46,6 +46,10 @@ namespace Pick {
             return 700'000 + MVV_LVA[static_cast<int>(victim)][static_cast<int>(attacker)];
         }
 
+        // Killers
+        if (move == ply_killers[0]) return 600'000;
+        if (move == ply_killers[1]) return 550'000;
+
         // Quiet moves
         if (move.is_castling()) {
             return 50'000;
@@ -57,12 +61,11 @@ namespace Pick {
 
 	class Picker {
     public:
-		Picker(Position::Position& pos, MoveList& list, Move tt_move) 
+        Picker(Position::Position& pos, MoveList& list, Move tt_move, std::array<Move, 2> ply_killers = {})
             :moves{list} {
 			
 			for (size_t idx{}; idx < moves.size(); ++idx) {
-				auto& move = moves[idx];
-                scores[idx] = score_move(pos, move, tt_move);
+                int score = score_move(pos, moves[idx], tt_move, ply_killers);
 			}
 		}
 
