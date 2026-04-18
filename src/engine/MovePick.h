@@ -23,9 +23,15 @@ namespace Pick {
         {0,  0,  0,  0,  0,  0,  0}  // Victim King
     };
 
-    int score_move(const Position::Position& pos, Move move, Move tt_move, const HistoryArr& history, std::array<Move, 2> ply_killers = {}){
+    int score_move(const Position::Position& pos, Move move, Move tt_move, Move pv_move, 
+        const HistoryArr& history, std::array<Move, 2> ply_killers = {})
+    {
+        if (move == pv_move) {
+            return 1'000'002;
+        }
+
         if (move == tt_move) {
-            return 1'000'000;                  // TT move always searched first
+            return 1'000'000;
         }
 
         // Promotions
@@ -58,11 +64,13 @@ namespace Pick {
 
 	class Picker {
     public:
-        Picker(Position::Position& pos, MoveList& list, Move tt_move, const HistoryArr& history, std::array<Move, 2> ply_killers = {})
-            :moves{list} {
+        Picker(Position::Position& pos, MoveList& list, Move tt_move, Move pv_move, 
+            const HistoryArr& history, std::array<Move, 2> ply_killers = {})
+            :moves{list} 
+{
 			
 			for (size_t idx{}; idx < moves.size(); ++idx) {
-                scores[idx] = score_move(pos, moves[idx], tt_move, history, ply_killers);
+                scores[idx] = score_move(pos, moves[idx], tt_move, pv_move, history, ply_killers);
 			}
 		}
 

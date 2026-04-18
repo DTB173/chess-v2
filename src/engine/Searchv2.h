@@ -42,6 +42,7 @@ namespace Search {
 
 	using KillerArr = std::array<std::array<Move, Search_Constants::MAX_PLY>, 2>;
 	using HistoryArr = std::array<std::array<std::array<int, Search_Constants::MAX_PLY>, Search_Constants::MAX_PLY>, 2>;
+	using PvArr = std::array<std::array<Move, Search_Constants::MAX_PLY>, Search_Constants::MAX_PLY>;
 
 	TranspositionTable::TT tt(Search_Constants::TT_SIZE_MB);
 
@@ -62,11 +63,17 @@ namespace Search {
 		bool check_time_loop() { time_up = (nodes_visited & 127) == 0 && should_stop(); return time_up; }
 		inline double time_elapsed_ms(std::chrono::steady_clock::time_point start);
 
-		void send_uci(int depth, int score, Move best_so_far) const;
+		void send_uci(int depth, int score) const;
+		std::string pv_str()const;
 
 	private:
 		HistoryArr history{};
 		KillerArr killers{};
+		struct Pv_Line {
+			PvArr table;
+			std::array<int, Search_Constants::MAX_PLY> length;
+		}pv;
+
 
 		std::chrono::steady_clock::time_point search_start{};
 		double max_time_ms{};
@@ -103,7 +110,15 @@ namespace Search {
 		return std::chrono::duration<double, std::milli>(now - start).count();
 	}
 
-	inline void Searcher::send_uci(int depth, int score, Move best_so_far)const {
+	inline std::string Searcher::pv_str()const {
+		std::string s;
+		s.reserve(pv.length[0] * 5);
+		for (int i{}; i < pv.length[0]; ++i) {
+			s += move_to_string(pv.table[0][i]) + ' ';
+		}
+		return s;
+	}
+	inline void Searcher::send_uci(int depth, int score)const {
 		std::string uci_output{};
 		std::string pv_string{};
 
@@ -125,9 +140,9 @@ namespace Search {
 		}
 
 		// UCI info line
-		pv_string = best_so_far != NO_MOVE ? move_to_string(best_so_far) : "";
+		pv_string = pv_str();
 		uci_output = std::format(
-			"info depth {} seldepth {} score {} nodes {} hashfull {} nps {} time {} current_best {}",
+			"info depth {} seldepth {} score {} nodes {} hashfull {} nps {} time {} pv {}",
 			depth,
 			max_sel_depth,
 			score_str,
@@ -173,6 +188,7 @@ namespace Search {
 
 	inline int Searcher::quiescence(Position::Position& pos, int alpha, int beta, int ply) {
 		nodes_visited++;
+		pv.length[ply] = ply;
 		if (ply > max_sel_depth) max_sel_depth = ply;
 
 		Move tt_move{};
@@ -196,7 +212,7 @@ namespace Search {
 		// 2. =========== Move Generation ===========
 		MoveGen::MoveList moves;
 		MoveGen::generate_captures_and_promos(pos, moves);
-		Pick::Picker mp(pos, moves, tt_move, history);
+		Pick::Picker mp(pos, moves, tt_move, NO_MOVE, history);
 
 		// 3. ========== Main Search ================
 		Move move{};
@@ -218,7 +234,7 @@ namespace Search {
 
 	inline int Searcher::negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
 		nodes_visited++;
-
+		pv.length[ply] = ply;
 		// 1. ========= Terminal checks =============
 
 		// if its draw, we stop searching
@@ -258,10 +274,11 @@ namespace Search {
 
 		// 5. ============ Move generation ==========
 		std::array<Move, 2> ply_killers = { killers[0][ply], killers[1][ply] };
+		Move pv_move = (pv.length[ply] > ply) ? pv.table[ply][ply] : NO_MOVE;
 
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
-		Pick::Picker mp(pos, moves, tt_move, history, ply_killers);
+		Pick::Picker mp(pos, moves, tt_move, pv_move, history, ply_killers);
 
 		// 6. ========== Main search setup ==========
 		Move best_move{};
@@ -275,6 +292,8 @@ namespace Search {
 
 			if (check_time_loop()) return 0;
 
+			Color us = pos.turn();
+
 			pos.make_move(move);
 
 			// 6.1 ============ LMR =================
@@ -282,7 +301,7 @@ namespace Search {
 			if (depth >= 3 && move_count > 3 && !in_check && !move.is_capture() && !move.is_promo()) {
 				int reduction = LMR_TABLE[depth][move_count];
 
-				int hist = history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()];
+				int hist = history[static_cast<int>(us) - 1][move.from()][move.to()];
 
 				// dont reduce killers and moves with good history
 				if (move == ply_killers[0] || move == ply_killers[1]) --reduction;
@@ -317,11 +336,19 @@ namespace Search {
 				best_score = score;
 				best_move = move;
 				if (ply == 0) best_move_root = move;
+			}
 
-				if (score > alpha) {
-					alpha = score;
-					if (score >= beta) break; // Beta Cutoff
+			if (score > alpha) {
+				alpha = score;
+
+				// PV update
+				pv.table[ply][ply] = move;
+				for (int i = ply + 1; i < pv.length[ply + 1]; ++i) {
+					pv.table[ply][i] = pv.table[ply + 1][i];
 				}
+				pv.length[ply] = pv.length[ply + 1];
+
+				if (score >= beta) break;
 			}
 		}
 
@@ -365,7 +392,7 @@ namespace Search {
 		// fallback if we cant find a good move in given time
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
-		Pick::Picker initial_picker(pos, moves, NO_MOVE, history);
+		Pick::Picker initial_picker(pos, moves, NO_MOVE, NO_MOVE, history);
 		best_move_root = initial_picker.next_legal(pos);
 
 		for (int depth = 1; depth <= target_depth; ++depth) {
@@ -380,7 +407,7 @@ namespace Search {
 
 			best_so_far = (best_move_root != NO_MOVE) ? best_move_root : NO_MOVE;
 
-			send_uci(depth, score, best_so_far);
+			send_uci(depth, score);
 		}
 		return best_so_far;
 	}
