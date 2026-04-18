@@ -13,39 +13,30 @@ namespace Perft
     using namespace Types;
 
     ui64 perft(Position::Position& pos, int depth, bool bulk_count = true) {
-        // Generate moves for the current position
         MoveGen::MoveList moves;
         MoveGen::generate_all_moves(pos, moves);
 
-        // 1. BULK COUNTING OPTIMIZATION
-        // If we are at depth 1 and bulk_count is enabled, we need to return
-        // the count of LEGAL moves. 
         if (depth == 1 && bulk_count) {
             ui64 count = 0;
             for (const auto& m : moves) {
                 Color us = pos.turn();
                 pos.make_move(m);
-                // Only count if the move didn't leave the king in check
                 if (!pos.is_in_check(us)) {
                     count++;
                 }
-
                 pos.undo_move();
             }
             return count;
         }
 
-        // 2. BASE CASE (If bulk counting is off or we hit depth 0)
         if (depth == 0) return 1;
 
-        // 3. RECURSIVE STEP
         ui64 nodes = 0;
         for (const auto& m : moves) {
             Color us = pos.turn();
             pos.make_move(m);
 
-            // Legal move check
-            if (!pos.is_in_check(pos.turn())) {
+            if (!pos.is_in_check(us)) {
                 nodes += perft(pos, depth - 1, bulk_count);
             }
 
@@ -60,7 +51,7 @@ namespace Perft
         Position::Position pos; 
         constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
-        pos.set_fen(startpos);
+        pos.set_fen(kiwipete);
         
         return perft(pos, depth, bulk);
     }
