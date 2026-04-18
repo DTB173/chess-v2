@@ -165,7 +165,7 @@ namespace Position {
             Flags prev_flags;
         };
 
-        std::unique_ptr<std::array<StateRecord, 2048>> history;
+        std::array<StateRecord, 2048> history;
         std::array<ui64, 12> board{};
         std::array<ui64, 2> occupancy{};
         ui64 total_pieces{};
@@ -179,25 +179,6 @@ namespace Position {
         size_t history_idx{};
         Square king_sq[2];
     public:
-        Position() : history(std::make_unique<std::array<StateRecord, 2048>>()) {};
-        Position(const Position& other)
-            : board(other.board),
-            occupancy(other.occupancy),
-            total_pieces(other.total_pieces),
-            mailbox(other.mailbox),
-            zobrist_key(other.zobrist_key),
-            pawns_key(other.pawns_key),
-            current_score(other.current_score),
-            current_phase(other.current_phase),
-            metadata(other.metadata),
-            history_idx(other.history_idx)
-        {
-            history = std::make_unique<std::array<StateRecord, 2048>>(*other.history);
-
-            king_sq[0] = other.king_sq[0];
-            king_sq[1] = other.king_sq[1];
-        }
-
 		// prevent accidental copying, allowed to setup for lazy smp
 		//Position(const Position& other) = delete;
 		//Position& operator=(const Position& other) = delete;
@@ -238,7 +219,7 @@ namespace Position {
 
         Move get_last_move() const {
             if (history_idx == 0) return NO_MOVE;
-            Move m = (*history)[history_idx - 1].prev_half_move;
+            Move m = history[history_idx - 1].prev_half_move;
             return m;
         }
 		// zugzwang detection helper
@@ -280,7 +261,7 @@ namespace Position {
             int start = std::max(0, static_cast<int>(history_idx - metadata.get_clock()));
 
             for (int i = history_idx - 1; i >= start; --i) {
-                if ((*history)[i].prev_zobrist == zobrist_key) {
+                if (history[i].prev_zobrist == zobrist_key) {
                     return true;
                 }
             }
@@ -300,7 +281,7 @@ namespace Position {
             metadata = Flags();
 
             history_idx = 0;
-            std::fill(history->begin(), history->end(), StateRecord{});
+            std::fill(history.begin(), history.end(), StateRecord{});
 
             current_score = Score{ 0, 0 };
             current_phase = 0;
@@ -465,11 +446,10 @@ namespace Position {
             return true;
         }
 
-
         // NPM helpers
         void make_null_move() {
-            (*history)[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
-            assert(history_idx < history->size());
+            history[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
+            assert(history_idx < history.size());
 
             if (metadata.en_passant_square() != Square::SQ_NONE) {
                 zobrist_key ^= Zobrist::en_passant[metadata.ep_index()];
@@ -480,7 +460,7 @@ namespace Position {
             metadata.toggle_turn();
         }
         void undo_null_move() {
-            StateRecord prev = (*history)[--history_idx];
+            StateRecord prev = history[--history_idx];
             metadata = prev.prev_flags;
             zobrist_key = prev.prev_zobrist;
             pawns_key = prev.prev_pawn;
@@ -495,8 +475,8 @@ namespace Position {
             Piece captured = mailbox[to];
 
             // 1. History(Must store captured piece for undo)
-            (*history)[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
-            assert(history_idx < history->size());
+            history[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
+            assert(history_idx < history.size());
 
             // 2. XOR OUT old metadata before we change it
             zobrist_key ^= Zobrist::castling[metadata.castling_index()];
@@ -548,7 +528,7 @@ namespace Position {
         }
 
         void undo_move() {
-            StateRecord prev = (*history)[--history_idx];
+            StateRecord prev = history[--history_idx];
             const int from = prev.prev_half_move.from();
             const int to = prev.prev_half_move.to();
             const int flags = prev.prev_half_move.flags();
