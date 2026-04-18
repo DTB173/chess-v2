@@ -17,15 +17,25 @@
 namespace Search {
 
 	namespace Search_Constants {
-		constexpr int INF      = 32'001;
+		constexpr int INF = 32'001;
 		constexpr int MATE_VAL = 32'000;
-		constexpr int MAX_PLY  = 64;
+		constexpr int MAX_PLY = 64;
 
-		constexpr int MAX_HISTORY     = 16'384;
+		constexpr int MAX_HISTORY = 16'384;
 		constexpr int HISTORY_GRAVITY = 256;
 
 		constexpr int TT_SIZE_MB = 256;
 	}
+
+	const std::array<std::array<int, 64>, 64> LMR_TABLE = []() {
+		std::array<std::array<int, 64>, 64> table{};
+		for (int depth = 1; depth < 64; ++depth) {
+			for (int moves = 1; moves < 64; ++moves) {
+				table[depth][moves] = static_cast<int>((std::log(depth) + std::log(moves)) / 2.25);
+			}
+		}
+		return table;
+	}();
 
 	using namespace Types;
 	using MoveGen::MoveList;
@@ -48,7 +58,7 @@ namespace Search {
 		void update_history(const Move move, Color side, int bonus);
 
 		bool should_stop();
-		void check_time() { time_up = (nodes_visited & 2047) == 0 && should_stop();	}
+		void check_time() { time_up = (nodes_visited & 2047) == 0 && should_stop(); }
 		bool check_time_loop() { time_up = (nodes_visited & 127) == 0 && should_stop(); return time_up; }
 		inline double time_elapsed_ms(std::chrono::steady_clock::time_point start);
 
@@ -217,16 +227,16 @@ namespace Search {
 		// periodical time check
 		check_time();
 		if (time_up) return 0;
-		
+
 		// 2. ============== TT Lookup ==============
-		
+
 		int alpha_orig = alpha;
 		Move tt_move = NO_MOVE;
 		int tt_score = 0;
 		if (probe_tt(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_score, tt_move)) {
-			if(ply > 0) return tt_score;
+			if (ply > 0) return tt_score;
 		}
-		
+
 		// 3. ========== Quiescence at leafs ========
 		if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
@@ -237,7 +247,7 @@ namespace Search {
 		int static_eval = Eval::evaluate<false>(pos, tt, current_age);
 		if (ply >= 64) return static_eval;
 
-		// 4. ============= Null Move Pruning =======
+		// 4. ========= Null Move Pruning ===========
 		if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
 			int R = 2 + depth / 3;
 			pos.make_null_move();
@@ -247,7 +257,7 @@ namespace Search {
 		}
 
 		// 5. ============ Move generation ==========
-		std::array<Move,2> ply_killers = { killers[0][ply], killers[1][ply] };
+		std::array<Move, 2> ply_killers = { killers[0][ply], killers[1][ply] };
 
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
@@ -255,7 +265,7 @@ namespace Search {
 
 		// 6. ========== Main search setup ==========
 		Move best_move{};
-		int best_score{-Search_Constants::INF};
+		int best_score{ -Search_Constants::INF };
 
 		int move_count{};
 		Move move{};
@@ -267,17 +277,42 @@ namespace Search {
 
 			pos.make_move(move);
 
+			// 6.1 ============ LMR =================
 			int score{};
-		    score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
+			if (depth >= 3 && move_count > 3 && !in_check && !move.is_capture() && !move.is_promo()) {
+				int reduction = LMR_TABLE[depth][move_count];
+
+				int hist = history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()];
+
+				// dont reduce killers and moves with good history
+				if (move == ply_killers[0] || move == ply_killers[1]) --reduction;
+				if (hist > 2000) --reduction;
+
+				// dont reduce too much
+				reduction = std::clamp(reduction, 0, depth - 2);
+
+				score = -negamax(pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, true);
+
+				// fallback research
+				if (score > alpha) {
+					score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
+				}
+			}
+			else {
+				score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
+			}
 
 			pos.undo_move();
 
+			// 6.2 ========= History update =========
 			if (score <= alpha && !move.is_capture()) {
 				if (move != killers[0][ply] && move != killers[1][ply]) {
-					update_history(move, pos.turn(), -100 * depth);
+					int penalty = depth * 20;
+					update_history(move, pos.turn(), -penalty);
 				}
 			}
 
+			// 6.3 ========== Beta cutoff ===========
 			if (score > best_score) {
 				best_score = score;
 				best_move = move;
@@ -294,16 +329,21 @@ namespace Search {
 			return in_check ? -Search_Constants::MATE_VAL + ply : 0;
 		}
 
-		// Update Heuristics on Cutoff
+		// 7. ======== Update Heuristics on Cutoff ========
 		if (best_score >= beta && !best_move.is_capture()) {
-			int bonus = depth * depth;
+			int bonus = depth * depth * 10;
 
 			update_history(best_move, pos.turn(), bonus);
-			killers[1][ply] = killers[0][ply];
-			killers[0][ply] = best_move;
-		}
 
+			if (best_move != killers[0][ply]) {
+				killers[1][ply] = killers[0][ply];
+				killers[0][ply] = best_move;
+			}
+		}
+		
+		// 8. =============== TT store ====================
 		store_tt(pos.get_zobrist_key(), depth, ply, best_score, alpha_orig, beta, best_move, static_eval);
+
 		return best_score;
 	}
 
