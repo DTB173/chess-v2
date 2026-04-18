@@ -36,7 +36,7 @@ namespace Search {
 	private:
 		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta);
 		int quiescence(Position::Position& pos, int alpha, int beta, int ply);
-		bool probe_tt(ui64 key, int depth, int ply, int& alpha, int& beta, int& tt_score, Move& tt_move);
+		bool probe_tt(ui64 key, int depth, int ply, int alpha, int beta, int& tt_score, Move& tt_move);
 		void store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval);
 
 		bool should_stop();
@@ -66,7 +66,7 @@ namespace Search {
 		}
 
 		double elapsed_ms = time_elapsed_ms(search_start);
-		constexpr int overhead = 50;
+		constexpr int overhead = 10;
 
 		if (elapsed_ms >= (max_time_ms - overhead)) {
 			time_up = true;
@@ -120,34 +120,24 @@ namespace Search {
 		std::cout << uci_output << std::endl;
 	}
 
-	inline bool Searcher::probe_tt(ui64 key, int depth, int ply, int& alpha, int& beta, int& tt_score, Move& tt_move) {
+	inline bool Searcher::probe_tt(ui64 key, int depth, int ply, int alpha, int beta, int& tt_score, Move& tt_move) {
 		TranspositionTable::TTEntry* entry = tt.probe(key);
 		if (!entry) return false;
 
-		tt_move = entry->move(); // Always retrieve the move for ordering
+		tt_move = entry->move();
 		tt_score = TranspositionTable::TT::score_from_tt(entry->score_, ply);
 
-		// Only use the score for cutoffs if the entry is deep enough
 		if (entry->depth_ >= depth) {
-			if (entry->type() == TranspositionTable::EXACT) {
-				return true;
-			}
-			if (entry->type() == TranspositionTable::LOWER_BOUND) {
-				alpha = std::max(alpha, tt_score);
-			}
-			else if (entry->type() == TranspositionTable::UPPER_BOUND) {
-				beta = std::min(beta, tt_score);
-			}
-
-			if (alpha >= beta) return true;
+			if (entry->type() == TranspositionTable::EXACT)                            return true;
+			if (entry->type() == TranspositionTable::LOWER_BOUND && tt_score >= beta)  return true;
+			if (entry->type() == TranspositionTable::UPPER_BOUND && tt_score <= alpha) return true;
 		}
-
 		return false;
 	}
 
 	inline void Searcher::store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval) {
 		ui8 type = TranspositionTable::UPPER_BOUND;
-		if (score >= beta) type = TranspositionTable::LOWER_BOUND;
+		if (score >= beta)           type = TranspositionTable::LOWER_BOUND;
 		else if (score > alpha_orig) type = TranspositionTable::EXACT;
 
 		tt.store(key, depth, score, best_move, type, ply, current_age, static_eval);
@@ -159,16 +149,19 @@ namespace Search {
 
 		Move tt_move{};
 		int tt_score = 0;
-		int alpha_orig = alpha;
 		if (probe_tt(pos.get_zobrist_key(), 0, ply, alpha, beta, tt_score, tt_move)) return tt_score;
 
 		// 1. ============ Standing Pat =============
 		int static_eval = Eval::evaluate<false>(pos, tt, current_age);
 
-		// If our static evaluation is already enough to cause a beta cutoff, stop.
-		if (static_eval >= beta) return beta;
-		// If the static eval is better than alpha, update alpha.
-		if (static_eval > alpha) alpha = static_eval;
+		bool in_check = pos.is_in_check(pos.turn());
+
+		if (!in_check) {
+			// If our static evaluation is already enough to cause a beta cutoff, stop.
+			if (static_eval >= beta) return beta;
+			// If the static eval is better than alpha, update alpha.
+			if (static_eval > alpha) alpha = static_eval;
+		}
 
 		if (ply >= Search_Constants::MAX_PLY) return static_eval;
 
@@ -192,7 +185,6 @@ namespace Search {
 			}
 		}
 
-		//store_tt(pos.get_zobrist_key(), 0, ply, alpha, alpha_orig, beta, best_move, static_eval);
 		return alpha;
 	}
 
@@ -214,7 +206,7 @@ namespace Search {
 		Move tt_move = NO_MOVE;
 		int tt_score = 0;
 		if (probe_tt(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_score, tt_move)) {
-			return tt_score;
+			if(ply > 0) return tt_score;
 		}
 		
 		// 3. ========== Quiescence at leafs ========
@@ -266,6 +258,7 @@ namespace Search {
 		if (legal_count == 0) {
 			return in_check ? -Search_Constants::MATE_VAL + ply : 0;
 		}
+
 		store_tt(pos.get_zobrist_key(), depth, ply, best_score, alpha_orig, beta, best_move, static_eval);
 		return best_score;
 	}

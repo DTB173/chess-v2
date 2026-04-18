@@ -104,16 +104,12 @@ namespace TranspositionTable {
                 if (e.key_ == key) {
 
                     // Only overwrite if better
-                    if (depth >= e.depth_ || type == EXACT) {
+                    if (depth >= e.depth_) {
                         e = TTEntry(key, tt_score, eval, best_move, (i8)depth, type, age);
                     }
                     else {
-                        // Keep old search info, but improve details
-                        if (best_move != NO_MOVE)
-                            e.move_ = best_move;
-
-                        if (eval != Constants::SCORE_NONE)
-                            e.static_eval_ = eval;
+                        if (best_move != NO_MOVE) e.move_ = best_move;
+                        if (eval != Constants::SCORE_NONE) e.static_eval_ = eval;
                     }
                     return;
                 }
