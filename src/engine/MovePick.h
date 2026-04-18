@@ -65,7 +65,7 @@ namespace Pick {
             :moves{list} {
 			
 			for (size_t idx{}; idx < moves.size(); ++idx) {
-                int score = score_move(pos, moves[idx], tt_move, ply_killers);
+                scores[idx] = score_move(pos, moves[idx], tt_move, history, ply_killers);
 			}
 		}
 
