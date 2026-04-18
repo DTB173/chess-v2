@@ -13,9 +13,10 @@
 #include "Searchv2.h"
 
 namespace CLI {
-	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-	constexpr const char* test = "8/8/8/8/8/8/ppp5/K6k b - - 0 1";
-	constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
+	[[maybe_unused]] constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+	[[maybe_unused]] constexpr const char* test = "8/8/8/8/8/8/ppp5/K6k b - - 0 1";
+	[[maybe_unused]] constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
+	[[maybe_unused]] constexpr const char* promos = "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1";
 
 	using namespace Types;
 	enum class OpType {
@@ -94,7 +95,7 @@ namespace CLI {
 		Zobrist::init();
 		Search::Searcher searcher;
 		Position::Position pos;
-		if (!pos.set_fen(kiwipete)) {
+		if (!pos.set_fen(startpos)) {
 			std::cerr << "Error laoding fen\n";
 			return;
 		}
@@ -105,12 +106,13 @@ namespace CLI {
 		int move_count = 0;
 		while (playing) {
 			if (pos.turn() == Types::Color::BLACK && operation != OpType::UNDO) {
-				Types::Move m = searcher.start_search(pos, 64, 15);
+				Types::Move m = searcher.start_search(pos, 64, 500);
 				std::cout << "Best move: " << Types::move_to_string(m) << '\n';
 				pos.make_move(m);
 				pos.print(std::cout);
 				++move_count;
 			}
+
 
 			std::cout << ">> ";
 			std::getline(std::cin, input);
