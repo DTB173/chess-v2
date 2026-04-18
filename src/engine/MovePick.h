@@ -11,6 +11,7 @@ namespace Pick {
 
 	using MoveGen::MoveList;
     using namespace Types;
+    using HistoryArr = std::array<std::array<std::array<int, 64>, 64>, 2>;
 
     constexpr int MVV_LVA[7][7] = {
         {0,  0,  0,  0,  0,  0,  0}, // No Victim
@@ -22,7 +23,7 @@ namespace Pick {
         {0,  0,  0,  0,  0,  0,  0}  // Victim King
     };
 
-    int score_move(const Position::Position& pos, Move move, Move tt_move, std::array<Move, 2> ply_killers = {}){
+    int score_move(const Position::Position& pos, Move move, Move tt_move, const HistoryArr& history, std::array<Move, 2> ply_killers = {}){
         if (move == tt_move) {
             return 1'000'000;                  // TT move always searched first
         }
@@ -51,17 +52,13 @@ namespace Pick {
         if (move == ply_killers[1]) return 550'000;
 
         // Quiet moves
-        if (move.is_castling()) {
-            return 50'000;
-        }
-
-        // All other quiet moves are equal
-        return 0;
+        auto pt = pos.get_mailbox()[move.from()];
+        return history[static_cast<int>(pt.color()) - 1][move.from()][move.to()];
     }
 
 	class Picker {
     public:
-        Picker(Position::Position& pos, MoveList& list, Move tt_move, std::array<Move, 2> ply_killers = {})
+        Picker(Position::Position& pos, MoveList& list, Move tt_move, const HistoryArr& history, std::array<Move, 2> ply_killers = {})
             :moves{list} {
 			
 			for (size_t idx{}; idx < moves.size(); ++idx) {

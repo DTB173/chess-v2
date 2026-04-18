@@ -21,6 +21,9 @@ namespace Search {
 		constexpr int MATE_VAL = 32'000;
 		constexpr int MAX_PLY  = 64;
 
+		constexpr int MAX_HISTORY     = 16'384;
+		constexpr int HISTORY_GRAVITY = 256;
+
 		constexpr int TT_SIZE_MB = 256;
 	}
 
@@ -28,6 +31,8 @@ namespace Search {
 	using MoveGen::MoveList;
 
 	using KillerArr = std::array<std::array<Move, Search_Constants::MAX_PLY>, 2>;
+	using HistoryArr = std::array<std::array<std::array<int, Search_Constants::MAX_PLY>, Search_Constants::MAX_PLY>, 2>;
+
 	TranspositionTable::TT tt(Search_Constants::TT_SIZE_MB);
 
 	class Searcher {
@@ -40,6 +45,7 @@ namespace Search {
 
 		bool probe_tt(ui64 key, int depth, int ply, int alpha, int beta, int& tt_score, Move& tt_move);
 		void store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval);
+		void update_history(const Move move, Color side, int bonus);
 
 		bool should_stop();
 		void check_time() { time_up = (nodes_visited & 2047) == 0 && should_stop();	}
@@ -49,6 +55,7 @@ namespace Search {
 		void send_uci(int depth, int score, Move best_so_far) const;
 
 	private:
+		HistoryArr history{};
 		KillerArr killers{};
 
 		std::chrono::steady_clock::time_point search_start{};
@@ -147,6 +154,13 @@ namespace Search {
 		tt.store(key, depth, score, best_move, type, ply, current_age, static_eval);
 	}
 
+	inline void Searcher::update_history(const Move move, Color side, int bonus) {
+		int delta = std::clamp(bonus, -Search_Constants::MAX_HISTORY, Search_Constants::MAX_HISTORY);
+		int& val = history[static_cast<int>(side) - 1][move.from()][move.to()];
+		val += delta - (val * std::abs(delta)) / Search_Constants::HISTORY_GRAVITY;
+		val = std::clamp(val, -Search_Constants::MAX_HISTORY, Search_Constants::MAX_HISTORY);
+	}
+
 	inline int Searcher::quiescence(Position::Position& pos, int alpha, int beta, int ply) {
 		nodes_visited++;
 		if (ply > max_sel_depth) max_sel_depth = ply;
@@ -172,7 +186,7 @@ namespace Search {
 		// 2. =========== Move Generation ===========
 		MoveGen::MoveList moves;
 		MoveGen::generate_captures_and_promos(pos, moves);
-		Pick::Picker mp(pos, moves, tt_move);
+		Pick::Picker mp(pos, moves, tt_move, history);
 
 		// 3. ========== Main Search ================
 		Move move{};
@@ -228,7 +242,7 @@ namespace Search {
 
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
-		Pick::Picker mp(pos, moves, tt_move, ply_killers);
+		Pick::Picker mp(pos, moves, tt_move, history, ply_killers);
 
 		// 5. ========== Main search setup ==========
 		Move best_move{};
@@ -249,6 +263,12 @@ namespace Search {
 
 			pos.undo_move();
 
+			if (score <= alpha && !move.is_capture()) {
+				if (move != killers[0][ply] && move != killers[1][ply]) {
+					update_history(move, pos.turn(), -100 * depth);
+				}
+			}
+
 			if (score > best_score) {
 				best_score = score;
 				best_move = move;
@@ -267,7 +287,9 @@ namespace Search {
 
 		// Update Heuristics on Cutoff
 		if (best_score >= beta && !best_move.is_capture()) {
+			int bonus = depth * depth;
 
+			update_history(best_move, pos.turn(), bonus);
 			killers[1][ply] = killers[0][ply];
 			killers[0][ply] = best_move;
 		}
@@ -294,7 +316,7 @@ namespace Search {
 		// fallback if we cant find a good move in given time
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
-		Pick::Picker initial_picker(pos, moves, NO_MOVE);
+		Pick::Picker initial_picker(pos, moves, NO_MOVE, history);
 		best_move_root = initial_picker.next_legal(pos);
 
 		for (int depth = 1; depth <= target_depth; ++depth) {
