@@ -40,7 +40,7 @@ namespace Search {
 		Move start_search(Position::Position& pos, int target_depth = 64, ui64 target_time_ms = 30 * 60 * 1000);
 		static inline std::atomic <bool> stop_signal{};
 	private:
-		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta);
+		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null);
 		int quiescence(Position::Position& pos, int alpha, int beta, int ply);
 
 		bool probe_tt(ui64 key, int depth, int ply, int alpha, int beta, int& tt_score, Move& tt_move);
@@ -206,7 +206,7 @@ namespace Search {
 		return alpha;
 	}
 
-	inline int Searcher::negamax(Position::Position& pos, int depth, int ply, int alpha, int beta) {
+	inline int Searcher::negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
 		nodes_visited++;
 
 		// 1. ========= Terminal checks =============
@@ -237,29 +237,38 @@ namespace Search {
 		int static_eval = Eval::evaluate<false>(pos, tt, current_age);
 		if (ply >= 64) return static_eval;
 
-		// 4. ============ Move generation ==========
+		// 4. ============= Null Move Pruning =======
+		if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+			int R = 2 + depth / 3;
+			pos.make_null_move();
+			int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -(beta - 1), false);
+			pos.undo_null_move();
+			if (score >= beta) return score;
+		}
+
+		// 5. ============ Move generation ==========
 		std::array<Move,2> ply_killers = { killers[0][ply], killers[1][ply] };
 
 		MoveList moves;
 		MoveGen::generate_all_moves(pos, moves);
 		Pick::Picker mp(pos, moves, tt_move, history, ply_killers);
 
-		// 5. ========== Main search setup ==========
+		// 6. ========== Main search setup ==========
 		Move best_move{};
 		int best_score{-Search_Constants::INF};
 
-		int legal_count{};
+		int move_count{};
 		Move move{};
 
 		while ((move = mp.next_legal(pos)) != NO_MOVE) {
-			legal_count++;
+			move_count++;
 
 			if (check_time_loop()) return 0;
 
 			pos.make_move(move);
 
 			int score{};
-			score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha);
+		    score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
 
 			pos.undo_move();
 
@@ -281,7 +290,7 @@ namespace Search {
 			}
 		}
 
-		if (legal_count == 0) {
+		if (move_count == 0) {
 			return in_check ? -Search_Constants::MATE_VAL + ply : 0;
 		}
 
@@ -325,7 +334,7 @@ namespace Search {
 			if ((time_elapsed_ms(search_start) >= soft_limit_ms) && depth > 1) break;
 
 			// Search start and updates
-			int score = negamax(pos, depth, 0, alpha, beta);
+			int score = negamax(pos, depth, 0, alpha, beta, true);
 
 			if (should_stop() && depth > 1) break;
 
