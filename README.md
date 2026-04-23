@@ -26,7 +26,7 @@ Unlike many modern engines using NNUE, this project uses a Pure Hand-Crafted Eva
 ## Building
 ```bash
   mkdir build && cd build
-  cmake -G "Ninja" . -DCMAKE_BUILD_TYPE=Release
+  cmake -G "Ninja" .. -DCMAKE_BUILD_TYPE=Release
   cmake --build .
 ```
 
