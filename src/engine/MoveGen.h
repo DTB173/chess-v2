@@ -265,19 +265,19 @@ namespace MoveGen {
 		generate_king_moves<T>(pos, moves);
 	}
 
-	void generate_captures(const Position::Position& pos, MoveList& __restrict moves) {
+	void generate_captures(const Position::Position& pos, MoveList& moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 	}
 
-	void generate_captures_and_promos(const Position::Position& pos, MoveList& __restrict moves) {
+	void generate_captures_and_promos(const Position::Position& pos, MoveList& moves) {
 		generate_moves<MoveType::CAPTURE>(pos, moves);
 		generate_quiet_promotions(pos, moves);
 	}
-	void generate_quiets(const Position::Position & pos, MoveList& __restrict moves) {
+	void generate_quiets(const Position::Position & pos, MoveList& moves) {
 		generate_moves<MoveType::QUIET>(pos, moves);
 	}
 
-	void generate_all_moves(const Position::Position & pos, MoveList& __restrict moves) {
+	void generate_all_moves(const Position::Position & pos, MoveList& moves) {
 		generate_moves<MoveType::ALL>(pos, moves);
 	}
 
