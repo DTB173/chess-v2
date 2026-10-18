@@ -202,13 +202,6 @@ namespace Position {
 		}
         inline ui64 get_total_occupancy()const { return total_pieces; }
         inline int half_move_count()const { return history_idx - 1; }
-        /*inline bool is_legal(Move m) {
-            Color us = turn(); // get 'us' before, make_move toogles turn
-            make_move(m);
-			bool in_check = is_in_check(us);
-            undo_move();
-			return !in_check;
-        }*/
 
         bool is_legal(Move m) const {
             const Color us = metadata.side_to_move();
@@ -322,11 +315,11 @@ namespace Position {
             pawns_key = 0;
         }
 
-        bool set_fen(const std::string& fen, EvalInfo::EvalTrace* et = nullptr) {
+        bool set_fen(std::string_view fen, EvalInfo::EvalTrace* et = nullptr) {
             using namespace Types;
             reset();
 
-            std::istringstream ss(fen);
+            std::istringstream ss(fen.data());
             std::string token;
 
             // 1. Piece placement
