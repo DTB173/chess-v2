@@ -3,3 +3,4 @@ build-gcc/
 build-gcc-neweval/
 build-gcc-re/
 out/
+/gcc_perft

@@ -16,10 +16,18 @@ namespace Bitwise{
 	template<std::integral T>
 	constexpr void clear_bit(T& bits, int index) { bits &= ~(1ULL << index); }
 
-	template<std::integral T>
+	template<std::unsigned_integral T>
 	inline int pop_lsb(T& bits) {
-		int s = _tzcnt_u64(bits); 
-		bits = _blsr_u64(bits); 
+		static_assert(sizeof(T) == 8, "pop_lsb expects a 64-bit bitboard type!");
+
+#if defined(_MSC_VER)
+		int s = static_cast<int>(_tzcnt_u64(bits));
+		bits = static_cast<T>(_blsr_u64(bits));
+#else
+		int s = __builtin_ctzll(bits);
+		bits &= bits - 1;
+#endif
+
 		return s;
 	}
 
