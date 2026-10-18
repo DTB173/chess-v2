@@ -188,4 +188,6 @@ namespace Types {
 
         return s;
     }
+
+    struct TimeLimits { int64_t soft_ms, hard_ms; };
 }

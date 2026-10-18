@@ -16,8 +16,33 @@
 namespace UCI {
 	using namespace Types;
 
-	std::mutex thread_mutex;
+	constexpr size_t npos = std::numeric_limits<size_t>::max();
 	std::thread search_thread;
+
+	struct EngineOptions { int64_t hash_mb = 64; int threads = 1; };
+
+	struct GoParams {
+		int64_t wtime = -1, btime = -1, winc = 0, binc = 0;
+		int64_t movetime = -1, movestogo = -1, nodes = -1;
+		int     depth = Search::Search_Constants::MAX_PLY - 1;
+		bool    infinite = false;
+	};
+
+	TimeLimits compute_limits(const GoParams& g, bool white) {
+		constexpr int64_t overhead = 30;
+		if (g.movetime >= 0) { auto t = std::max<int64_t>(1, g.movetime - overhead); return { t, t }; }
+
+		int64_t left = white ? g.wtime : g.btime;
+		int64_t inc = white ? g.winc : g.binc;
+		if (left < 0 || g.infinite) return { INT64_MAX, INT64_MAX };
+
+		int64_t avail = std::max<int64_t>(1, left - overhead);
+		int64_t mtg = g.movestogo > 0 ? std::min<int64_t>(g.movestogo, 50) : 30;
+		int64_t soft = std::min(avail / mtg + inc * 3 / 4, avail / 2);
+		int64_t hard = std::min(soft * 4, avail * 3 / 4);
+		return { std::max<int64_t>(1, soft), std::max<int64_t>(1, hard) };
+	}
+
 
 	void stop_and_join() {
 		Search::Searcher::stop_signal = true;
@@ -26,7 +51,7 @@ namespace UCI {
 		}
 	}
 
-	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+	constexpr const std::string_view startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 	enum class OpType {
 		ID,
@@ -34,19 +59,21 @@ namespace UCI {
 		NEWGAME,
 		POSITION,
 		GO,
+		OPTION,
 		QUIT,
 		STOP,
 		NONE,
 	};
 
 	OpType parse_input(std::string_view input) {
-		if (input == "uci") return OpType::ID;
-		if (input == "isready") return OpType::ISREADY;
-		if (input == "ucinewgame") return OpType::NEWGAME;
+		if (input == "uci")                return OpType::ID;
+		if (input == "isready")            return OpType::ISREADY;
+		if (input == "ucinewgame")         return OpType::NEWGAME;
 		if (input.starts_with("position")) return OpType::POSITION;
-		if (input.starts_with("go")) return OpType::GO;
-		if (input == "quit") return OpType::QUIT;
-		if (input == "stop") return OpType::STOP;
+		if (input.starts_with("go"))       return OpType::GO;
+		if (input.starts_with("option"))   return OpType::OPTION;
+		if (input == "quit")               return OpType::QUIT;
+		if (input == "stop")               return OpType::STOP;
 		return OpType::NONE;
 	}
 
@@ -78,7 +105,7 @@ namespace UCI {
 				flags = MoveFlags::DoublePush;
 			}
 			else if (from.file() != to.file() && target.is_none()) {
-				flags = MoveFlags::EnPassant; // (Note: your EnPassant already includes Capture bit)
+				flags = MoveFlags::EnPassant;
 			}
 		}
 		else if (p.type() == PieceType::KING && std::abs(from.file() - to.file()) > 1) {
@@ -101,7 +128,6 @@ namespace UCI {
 	}
 
 	void handle_position(std::string_view input, Position::Position& pos) {
-		Zobrist::init();
 		if (input.find("startpos") != std::string::npos) {
 			pos.set_fen(startpos);
 		}
@@ -126,10 +152,33 @@ namespace UCI {
 		}
 	}
 
+	GoParams handle_go(const std::string& input) {
+		GoParams options{};
+		std::stringstream ss(input);
+		std::string token;
+		while (ss >> token) {
+			if (token == "depth") ss >> options.depth;
+			else if (token == "movetime") ss >> options.movetime;
+			else if (token == "wtime") ss >> options.wtime;
+			else if (token == "btime") ss >> options.btime;
+			else if (token == "winc") ss >> options.winc;
+			else if (token == "binc") ss >> options.binc;
+			else if (token == "movestogo") ss >> options.movestogo;
+			else if (token == "infinite") options.infinite = true;
+		}
+		return options;
+	}
+
+	void handle_option() {
+
+	}
+
 	void uci_loop() {
 		Zobrist::init();
 		Position::Position pos;
 		Search::Searcher searcher;
+		EngineOptions engine_params{};
+		searcher.tt.resize(engine_params.hash_mb);
 
 		OpType op{ OpType::NONE };
 		std::string input;
@@ -150,78 +199,31 @@ namespace UCI {
 				break;
 
 			case OpType::NEWGAME:
+				stop_and_join();
 				pos.reset();
-				Search::tt.clear();
-				Eval::pawns_cache.clear();
+				searcher.clear();
 				break;
 
 			case OpType::POSITION:
+				stop_and_join();
 				handle_position(input, pos);
 				break;
 
 			case OpType::GO: {
-				int max_depth = 64;
-				int movetime_ms = -1;
-				int wtime = -1, btime = -1, winc = 0, binc = 0;
-				int movestogo = -1;
-				// 1. Parse all potential arguments
-				std::stringstream ss(input);
-				std::string token;
-				while (ss >> token) {
-					if (token == "depth") ss >> max_depth;
-					else if (token == "movetime") ss >> movetime_ms;
-					else if (token == "wtime") ss >> wtime;
-					else if (token == "btime") ss >> btime;
-					else if (token == "winc") ss >> winc;
-					else if (token == "binc") ss >> binc;
-					else if (token == "movestogo") ss >> movestogo;
-				}
+				auto params = handle_go(input);
 
-				int time_for_move_ms = 0;
+				bool white_move = pos.turn() == Color::WHITE;
+				auto limits = compute_limits(params, white_move);
 
-				// 2. Decide how much time to use
-				if (movetime_ms != -1) {
-					// If GUI says "movetime", we must use exactly that (minus buffer)
-					time_for_move_ms = movetime_ms - 50;
-				}
-				else if (wtime != -1 || btime != -1) {
-					bool is_white = pos.turn() == Types::Color::WHITE;
-					int time_left = is_white ? wtime : btime;
-					int inc = is_white ? winc : binc;
-
-					// Use total plies to find move number
-					int current_move = pos.half_move_count() / 2;
-
-					// 1. Dynamic Divisor: Target Move 40 for the bank drain.
-					// At Move 1, divisor is 40. At Move 30, divisor is 10.
-					int divisor = std::max(10, 40 - current_move);
-
-					// 2. Base Calculation
-					// We spend a larger chunk of the bank and 90% of the increment.
-					double base_time = (double)time_left / divisor;
-					time_for_move_ms = (int)(base_time + (inc * 0.9));
-
-					// 3. Middle Game "Combat" Bonus (Moves 10-30)
-
-					if (current_move >= 10 && current_move <= 30) {
-						time_for_move_ms = (int)(time_for_move_ms * 1.25);
-					}
-					// 4. Safety Buffer
-					time_for_move_ms -= 50;
-				}
-				else {
-					// Fallback for "go" with no arguments (e.g. 15 seconds)
-					time_for_move_ms = 1500000;
-				}
-
-				time_for_move_ms = std::max(80, time_for_move_ms - 120);
-				std::cout << "info string allocated " << time_for_move_ms << "ms\n" << std::flush;
 				stop_and_join();
-
 				Search::Searcher::stop_signal = false;
 
-				search_thread = std::thread([&searcher, &pos, max_depth, time_for_move_ms]() {
-					Types::Move best_move = searcher.start_search(pos, max_depth, time_for_move_ms);
+				int64_t depth = params.depth;
+
+				if(limits.hard_ms != npos) std::cout << "[info] string allocated " << limits.hard_ms << "ms\n" << std::flush;
+
+				search_thread = std::thread([&searcher, &pos, depth, limits]() {
+					Types::Move best_move = searcher.start_search(pos, depth, limits);
 					std::string move_str = (best_move == Types::NO_MOVE) ? "0000" : Types::move_to_string(best_move);
 					std::string out = std::format("bestmove {}\n", move_str);
 					std::cout << out << std::flush;
@@ -229,6 +231,10 @@ namespace UCI {
 				);
 			}
 			break;
+			case OpType::OPTION: {
+				handle_option();
+				break;
+			}
 			case OpType::QUIT:
 				stop_and_join();
 				play = false;
@@ -240,5 +246,6 @@ namespace UCI {
 				break;
 			}
 		}
+		stop_and_join();
 	}
 }

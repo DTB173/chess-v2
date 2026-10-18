@@ -95,6 +95,7 @@ namespace CLI {
 		Zobrist::init();
 		Search::Searcher searcher;
 		Position::Position pos;
+		searcher.tt.resize(64);
 		if (!pos.set_fen(startpos)) {
 			std::cerr << "Error laoding fen\n";
 			return;

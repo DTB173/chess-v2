@@ -56,8 +56,8 @@ namespace TranspositionTable {
         std::vector<Cluster> table;
         size_t size_mask;
     public:
-        TT(size_t sz_in_mb) {
-            size_t cluster_size = sizeof(Cluster); // 64 Bytes
+        void resize(size_t sz_in_mb) {
+            size_t cluster_size = sizeof(Cluster);
             size_t num_clusters = (sz_in_mb * 1024 * 1024) / cluster_size;
 
             // Next power of 2 for the mask

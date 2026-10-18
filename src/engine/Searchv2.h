@@ -44,12 +44,12 @@ namespace Search {
 	using HistoryArr = std::array<std::array<std::array<int, Search_Constants::MAX_PLY>, Search_Constants::MAX_PLY>, 2>;
 	using PvArr = std::array<std::array<Move, Search_Constants::MAX_PLY>, Search_Constants::MAX_PLY>;
 
-	TranspositionTable::TT tt(Search_Constants::TT_SIZE_MB);
-
 	class Searcher {
 	public:
-		Move start_search(Position::Position& pos, int target_depth = 64, ui64 target_time_ms = 30 * 60 * 1000);
+		Move start_search(Position::Position& pos, size_t target_depth, TimeLimits limits);
+		void clear();
 		static inline std::atomic <bool> stop_signal{};
+		static inline TranspositionTable::TT tt;
 	private:
 		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null);
 		int quiescence(Position::Position& pos, int alpha, int beta, int ply);
@@ -374,16 +374,14 @@ namespace Search {
 		return best_score;
 	}
 
-	inline Move Searcher::start_search(Position::Position& pos, int target_depth, ui64 target_time_ms) {
+	inline Move Searcher::start_search(Position::Position& pos, size_t target_depth, TimeLimits limits) {
 		best_move_root = NO_MOVE;
 		nodes_visited = 0;
 		max_sel_depth = 0;
-		max_time_ms = target_time_ms;
+		max_time_ms = limits.hard_ms;
 		current_age++;
 		time_up = false;
-
 		search_start = std::chrono::steady_clock::now();
-		const double soft_limit_ms = max_time_ms * 0.85;
 
 		Move best_so_far = NO_MOVE;
 		int alpha = -Search_Constants::INF;
@@ -398,7 +396,7 @@ namespace Search {
 		for (int depth = 1; depth <= target_depth; ++depth) {
 
 			// Early exit before starting expensive iteration
-			if ((time_elapsed_ms(search_start) >= soft_limit_ms) && depth > 1) break;
+			if ((time_elapsed_ms(search_start) >= limits.soft_ms) && depth > 1) break;
 
 			// Search start and updates
 			int score = negamax(pos, depth, 0, alpha, beta, true);
@@ -410,5 +408,13 @@ namespace Search {
 			send_uci(depth, score);
 		}
 		return best_so_far;
+	}
+
+	void Searcher::clear() {
+		tt.clear();
+		Eval::pawns_cache.clear();
+		history = {};
+		killers = {};
+		pv = {};
 	}
 }
