@@ -127,9 +127,9 @@ namespace UCI {
 		return Types::Move(from, to, flags);
 	}
 
-	void handle_position(std::string_view input, Position::Position& pos) {
+	void handle_position(const std::string& input, Position::Position& pos) {
 		if (input.find("startpos") != std::string::npos) {
-			pos.set_fen(startpos);
+			pos.set_fen(startpos.data());
 		}
 		else if (auto fen_pos = input.find("fen "); fen_pos != std::string::npos) {
 			// Find where moves start to isolate FEN

@@ -14,12 +14,19 @@ int main(int argc, char* argv[]) {
             UCI::uci_loop();
         }
         else if (mode == "perft") {
-            for (int i{}; i <= 6; ++i)
-                Perft::measure_perft(i, true);
+            Perft::PerftRecord record = Perft::parse_record(argc, argv);
+            Perft::measure_perft(record);
+        }
+        else if (mode == "testsuite") {
+            Perft::runt_test_suite();
         }
         else {
             std::cerr << "Unknown mode: " << mode << "\n";
-            std::cerr << "Usage: " << argv[0] << " [cli|uci|perft]\n";
+            std::cerr << "Usage: \n";
+            std::cerr << "\t" << argv[0] << " cli\n";
+            std::cerr << "\t" << argv[0] << " uci\n";
+            std::cerr << "\t" << argv[0] << " testsuite\n";
+            std::cerr << "\t" << argv[0] << " perft \"<fen>\" <depth> <expected nodes - optioanl>\n";
             return 1;
 		}
     }
