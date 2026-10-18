@@ -315,11 +315,11 @@ namespace Position {
             pawns_key = 0;
         }
 
-        bool set_fen(std::string_view fen, EvalInfo::EvalTrace* et = nullptr) {
+        bool set_fen(const std::string& fen, EvalInfo::EvalTrace* et = nullptr) {
             using namespace Types;
             reset();
 
-            std::istringstream ss(fen.data());
+            std::istringstream ss(fen);
             std::string token;
 
             // 1. Piece placement
