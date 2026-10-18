@@ -12,37 +12,23 @@ namespace Perft
 {
     using namespace Types;
 
-    ui64 perft(Position::Position& pos, int depth, bool bulk_count = true) {
+    ui64 perft(Position::Position& pos, int depth) {
+        if (depth == 0) return 1;
         MoveGen::MoveList moves;
         MoveGen::generate_all_moves(pos, moves);
 
-        if (depth == 1 && bulk_count) {
-            ui64 count = 0;
-            for (const auto& m : moves) {
-                Color us = pos.turn();
-                pos.make_move(m);
-                if (!pos.is_in_check(us)) {
-                    count++;
-                }
-                pos.undo_move();
-            }
-            return count;
+        if (depth == 1) {
+            ui64 n = 0;
+            for (const auto& m : moves) n += pos.is_legal(m);
+            return n;
         }
-
-        if (depth == 0) return 1;
-
         ui64 nodes = 0;
         for (const auto& m : moves) {
-            Color us = pos.turn();
+            if (!pos.is_legal(m)) continue;
             pos.make_move(m);
-
-            if (!pos.is_in_check(us)) {
-                nodes += perft(pos, depth - 1, bulk_count);
-            }
-
+            nodes += perft(pos, depth - 1);
             pos.undo_move();
         }
-
         return nodes;
     }
 
@@ -51,9 +37,11 @@ namespace Perft
         Position::Position pos; 
         [[maybe_unused]] constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         [[maybe_unused]] constexpr const char* kiwipete = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -";
-        pos.set_fen(kiwipete);
+        [[maybe_unused]] constexpr const char* position3 = "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - -";
+        [[maybe_unused]] constexpr const char* position4 = "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1";
+        pos.set_fen(startpos);
         
-        return perft(pos, depth, bulk);
+        return perft(pos, depth);
     }
 
     void divide(Position::Position& pos, int depth) {
