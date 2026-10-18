@@ -202,12 +202,44 @@ namespace Position {
 		}
         inline ui64 get_total_occupancy()const { return total_pieces; }
         inline int half_move_count()const { return history_idx - 1; }
-        inline bool is_legal(Move m) {
+        /*inline bool is_legal(Move m) {
             Color us = turn(); // get 'us' before, make_move toogles turn
             make_move(m);
 			bool in_check = is_in_check(us);
             undo_move();
 			return !in_check;
+        }*/
+
+        bool is_legal(Move m) const {
+            const Color us = metadata.side_to_move();
+            const Color them = opponent_of(us);
+            const int from = m.from(), to = m.to();
+            const Piece pc = mailbox[from];
+
+            // Square of the piece removed by this move (0 if none)
+            ui64 captured = 0;
+            if (m.flags() == MoveFlags::EnPassant) captured = 1ULL << ((us == Color::WHITE) ? to - 8 : to + 8);
+            else if (!mailbox[to].is_none())       captured = 1ULL << to;
+
+            // Occupancy after the move (rook hop on castling is ignored, see note)
+            ui64 occ = (total_pieces ^ (1ULL << from)) & ~captured;
+            occ |= 1ULL << to;
+
+            const bool king_moves = pc.type() == PieceType::KING;
+            const int ksq = king_moves ? to : static_cast<int>(king_sq[static_cast<int>(us) - 1]);
+            const ui64 alive = ~captured;
+
+            const ui64 pawns = get_bitboard(PieceType::PAWN, them) & alive;
+            const ui64 knights = get_bitboard(PieceType::KNIGHT, them) & alive;
+            const ui64 bishops = (get_bitboard(PieceType::BISHOP, them) | get_bitboard(PieceType::QUEEN, them)) & alive;
+            const ui64 rooks = (get_bitboard(PieceType::ROOK, them) | get_bitboard(PieceType::QUEEN, them)) & alive;
+
+            if (AttackTables::get_pawn_attacks(ksq, us) & pawns)     return false;
+            if (AttackTables::get_knight_attacks(ksq) & knights)     return false;
+            if (AttackTables::get_bishop_attacks(ksq, occ) & bishops) return false;
+            if (AttackTables::get_rook_attacks(ksq, occ) & rooks)     return false;
+            if (king_moves && (AttackTables::get_king_attacks(ksq) & get_bitboard(PieceType::KING, them))) return false;
+            return true;
         }
 
         inline bool gives_check(Move m) {
