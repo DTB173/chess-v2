@@ -249,47 +249,39 @@ namespace Position {
         }
 		// zugzwang detection helper
         bool has_non_pawn_material(Color c) const {
-            if (c == Color::WHITE) {
-                ui64 pieces{};
-                for (int i{1}; i < 6; ++i) {
-					pieces |= board[i];
+            const int base = (static_cast<int>(c) - 1) * 6;
+            return (board[base + 1] | board[base + 2] | board[base + 3] | board[base + 4]) != 0;
                 }
-                return pieces != 0ULL;
-            }
-            else {
-                ui64 pieces{};
-                for (int i{7}; i < 12; ++i) {
-                    pieces |= board[i];
-                }
-                return pieces != 0ULL;
-            }
-		}
 
         int evaluate() const {
-            // 1. Clamp phase to [0, 24] for safety
             int phase = std::clamp(current_phase, 0, 24);
-
-            // 2. Linear interpolation (Tapering)
             int score = current_score.eval(phase);
-
-            // 3. Return relative to side to move (standard for alpha-beta)
             return score;
         }
 
+        bool insufficient_material() const {
+            constexpr ui64 LIGHT_SQUARES = 0x55AA55AA55AA55AAULL;
+            constexpr ui64 DARK_SQUARES  = 0xAA55AA55AA55AA55ULL;
+            if (current_phase > 2) return false;
+            if (board[0] | board[6] | board[1] | board[7] | board[4] | board[10]) return false;  // pawns, rooks, queens
+
+            const ui64 knights = board[2] | board[8];
+            const ui64 bishops = board[3] | board[9];
+
+            if (!knights)                                   // K vs K, and all bishops on one color
+                return !(bishops & LIGHT_SQUARES) || !(bishops & DARK_SQUARES);
+            return !bishops && std::popcount(knights) == 1; // lone knight
+            }
+
         bool is_draw() const {
-            // 1. Fifty-move rule
-            if (metadata.get_clock() >= 100) {
-                return true;
-            }
+            if (metadata.get_clock() >= 100) return true;
+            if (insufficient_material()) return true;
 
-            // Check backwards, but only as far as the 50-move counter allows
-            int start = std::max(0, static_cast<int>(history_idx - metadata.get_clock()));
+            const int hist = static_cast<int>(history_idx);
+            const int start = std::max(0, hist - static_cast<int>(metadata.get_clock()));
 
-            for (int i = history_idx - 1; i >= start; --i) {
-                if (history[i].prev_zobrist == zobrist_key) {
-                    return true;
-                }
-            }
+            for (int i = hist - 4; i >= start; i -= 2)
+                if (history[i].prev_zobrist == zobrist_key) return true;
 
             return false;
         }
@@ -532,6 +524,8 @@ namespace Position {
                 place_piece(Piece(us, m.promotion_type()), to);
             }
             else if (flags == MoveFlags::DoublePush) {
+                const int ep_sq = (us == Color::WHITE) ? to - 8 : to + 8;
+                if (AttackTables::get_pawn_attacks(ep_sq, us) & get_bitboard(PieceType::PAWN, opponent_of(us)))
                 metadata.set_en_passant_file(Square(from).file());
             }
             else if (flags == MoveFlags::EnPassant) {
@@ -810,6 +804,13 @@ namespace Position {
             }
             return k;
         }
+
+        //=============== LEGACY ====================
+        void highlight_attacks(std::ostream& out, Square sq) const {
+            ui64 attacks = get_highlight_bitboard(sq);
+            print_attacks(out, attacks);
+        }
+
         void print_attacks(std::ostream& out, ui64 attacks) const {
             out << "\n    a   b   c   d   e   f   g   h\n";
             out << "  +---+---+---+---+---+---+---+---+\n";
