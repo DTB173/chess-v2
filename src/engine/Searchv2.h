@@ -23,8 +23,6 @@ namespace Search {
 
 		constexpr int MAX_HISTORY = 16'384;
 		constexpr int HISTORY_GRAVITY = 256;
-
-		constexpr int TT_SIZE_MB = 256;
 	}
 
 	const std::array<std::array<int, 64>, 64> LMR_TABLE = []() {
@@ -59,8 +57,18 @@ namespace Search {
 		void update_history(const Move move, Color side, int bonus);
 
 		bool should_stop();
-		void check_time() { time_up = (nodes_visited & 2047) == 0 && should_stop(); }
-		bool check_time_loop() { time_up = (nodes_visited & 127) == 0 && should_stop(); return time_up; }
+
+		template<bool is_loop>
+		bool check_time() {
+			if (time_up) return true;
+
+			constexpr auto mask = is_loop ? 127 : 2047;
+			if ((nodes_visited & mask) == 0)
+				time_up = should_stop();
+
+			return time_up;
+		}
+
 		inline double time_elapsed_ms(std::chrono::steady_clock::time_point start);
 
 		void send_uci(int depth, int score) const;
@@ -79,7 +87,7 @@ namespace Search {
 		double max_time_ms{};
 		bool time_up{};
 
-		int nodes_visited{};
+		ui64 nodes_visited{};
 		int max_sel_depth{};
 		Move best_move_root{};
 		ui8 current_age{};
@@ -89,7 +97,6 @@ namespace Search {
 		if (time_up) return true;
 
 		if (stop_signal.load(std::memory_order_relaxed)) {
-			time_up = true;
 			return true;
 		}
 
@@ -97,7 +104,6 @@ namespace Search {
 		constexpr int overhead = 10;
 
 		if (elapsed_ms >= (max_time_ms - overhead)) {
-			time_up = true;
 			return true;
 		}
 
@@ -171,24 +177,24 @@ namespace Search {
 		return false;
 	}
 
-	inline void Searcher::store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval) {
+	inline void Searcher::store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval){
 		ui8 type = TranspositionTable::UPPER_BOUND;
-		if (score >= beta)           type = TranspositionTable::LOWER_BOUND;
+		if      (score >= beta)      type = TranspositionTable::LOWER_BOUND;
 		else if (score > alpha_orig) type = TranspositionTable::EXACT;
 
 		tt.store(key, depth, score, best_move, type, ply, current_age, static_eval);
 	}
 
-	inline void Searcher::update_history(const Move move, Color side, int bonus) {
-		int delta = std::clamp(bonus, -Search_Constants::MAX_HISTORY, Search_Constants::MAX_HISTORY);
+	inline void Searcher::update_history(Move move, Color side, int bonus) {
+		constexpr int MAX = Search_Constants::MAX_HISTORY;
+		int delta = std::clamp(bonus, -MAX, MAX);
 		int& val = history[static_cast<int>(side) - 1][move.from()][move.to()];
-		val += delta - (val * std::abs(delta)) / Search_Constants::HISTORY_GRAVITY;
-		val = std::clamp(val, -Search_Constants::MAX_HISTORY, Search_Constants::MAX_HISTORY);
+		val += delta - val * std::abs(delta) / MAX;
 	}
 
 	inline int Searcher::quiescence(Position::Position& pos, int alpha, int beta, int ply) {
-		nodes_visited++;
-		pv.length[ply] = ply;
+		++nodes_visited;
+
 		if (ply > max_sel_depth) max_sel_depth = ply;
 
 		Move tt_move{};
@@ -208,10 +214,17 @@ namespace Search {
 		}
 
 		if (ply >= Search_Constants::MAX_PLY) return static_eval;
+		pv.length[ply] = ply;
 
 		// 2. =========== Move Generation ===========
 		MoveGen::MoveList moves;
-		MoveGen::generate_captures_and_promos(pos, moves);
+		MoveGen::generate_captures(pos, moves);
+		if (in_check) {
+			MoveGen::generate_quiets(pos, moves);
+		}
+		else {
+			MoveGen::generate_quiet_promotions(pos, moves);
+		}
 		Pick::Picker mp(pos, moves, tt_move, NO_MOVE, history);
 
 		// 3. ========== Main Search ================
@@ -222,6 +235,7 @@ namespace Search {
 			int score = -quiescence(pos, -beta, -alpha, ply + 1);
 			pos.undo_move();
 
+			if (check_time<true>()) return 0;
 			if (score >= beta) return beta;
 			if (score > alpha) {
 				alpha = score;
@@ -233,42 +247,38 @@ namespace Search {
 	}
 
 	inline int Searcher::negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
-		nodes_visited++;
-		pv.length[ply] = ply;
 		// 1. ========= Terminal checks =============
-
-		// if its draw, we stop searching
-		if (ply > 0 && pos.is_draw()) return 0;
-
-		// periodical time check
-		check_time();
-		if (time_up) return 0;
+		// if its draw or we run out of time, we stop searching
+		if (ply > 0 && pos.is_draw() || check_time<false>()) return 0;
 
 		// 2. ============== TT Lookup ==============
 
 		int alpha_orig = alpha;
 		Move tt_move = NO_MOVE;
 		int tt_score = 0;
-		if (probe_tt(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_score, tt_move)) {
-			if (ply > 0) return tt_score;
-		}
+		const bool pv_node = beta - alpha > 1;
+		if (probe_tt(pos.get_zobrist_key(), depth, ply, alpha, beta, tt_score, tt_move) && ply > 0 && !pv_node)	return tt_score;
 
 		// 3. ========== Quiescence at leafs ========
 		if (depth <= 0) return quiescence(pos, alpha, beta, ply);
+
+		nodes_visited++;
 
 		Color us = pos.turn();
 		bool in_check = pos.is_in_check(us);
 
 		// safety cutoff
 		int static_eval = Eval::evaluate<false>(pos, tt, current_age);
-		if (ply >= 64) return static_eval;
+		if (ply >= Search_Constants::MAX_PLY) return static_eval;
+		pv.length[ply] = ply;
 
 		// 4. ========= Null Move Pruning ===========
-		if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+		if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn()) && static_eval >= beta) {
 			int R = 2 + depth / 3;
 			pos.make_null_move();
 			int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -(beta - 1), false);
 			pos.undo_null_move();
+			if (abs(score) >= Search_Constants::MATE_VAL - 100) return beta;
 			if (score >= beta) return score;
 		}
 
@@ -287,10 +297,13 @@ namespace Search {
 		int move_count{};
 		Move move{};
 
+		MoveList quiets_tried;
+		int n_quiets{};
+
 		while ((move = mp.next_legal(pos)) != NO_MOVE) {
 			move_count++;
 
-			if (check_time_loop()) return 0;
+			if (check_time<true>()) return 0;
 
 			Color us = pos.turn();
 
@@ -298,14 +311,14 @@ namespace Search {
 
 			// 6.1 ============ LMR =================
 			int score{};
-			if (depth >= 3 && move_count > 3 && !in_check && !move.is_capture() && !move.is_promo()) {
-				int reduction = LMR_TABLE[depth][move_count];
+			if (depth >= 3 && move_count > 3 && !in_check && !move.is_tactical()) {
+				int reduction = LMR_TABLE[std::min(depth,63)][std::min(move_count, 63)];
 
 				int hist = history[static_cast<int>(us) - 1][move.from()][move.to()];
 
 				// dont reduce killers and moves with good history
 				if (move == ply_killers[0] || move == ply_killers[1]) --reduction;
-				if (hist > 2000) --reduction;
+				if (hist > Search_Constants::MAX_HISTORY/8) --reduction;
 
 				// dont reduce too much
 				reduction = std::clamp(reduction, 0, depth - 2);
@@ -322,16 +335,10 @@ namespace Search {
 			}
 
 			pos.undo_move();
+			if (check_time<true>()) return 0;
+			if (!move.is_capture() && n_quiets < 64) quiets_tried.push_back(move);
 
-			// 6.2 ========= History update =========
-			if (score <= alpha && !move.is_capture()) {
-				if (move != killers[0][ply] && move != killers[1][ply]) {
-					int penalty = depth * 20;
-					update_history(move, pos.turn(), -penalty);
-				}
-			}
-
-			// 6.3 ========== Beta cutoff ===========
+			// 6.2 ========== Beta cutoff ===========
 			if (score > best_score) {
 				best_score = score;
 				best_move = move;
@@ -357,10 +364,13 @@ namespace Search {
 		}
 
 		// 7. ======== Update Heuristics on Cutoff ========
-		if (best_score >= beta && !best_move.is_capture()) {
-			int bonus = depth * depth * 10;
-
+		if (best_score >= beta && !best_move.is_tactical()) {
+			int bonus = std::min(depth * depth, 1600);
 			update_history(best_move, pos.turn(), bonus);
+
+			for (int i = 0; i < quiets_tried.size() - 1; i++) {
+				update_history(quiets_tried[i], pos.turn(), -bonus);
+			}
 
 			if (best_move != killers[0][ply]) {
 				killers[1][ply] = killers[0][ply];
@@ -401,7 +411,7 @@ namespace Search {
 			// Search start and updates
 			int score = negamax(pos, depth, 0, alpha, beta, true);
 
-			if (should_stop() && depth > 1) break;
+			if (check_time<false>()) break;
 
 			best_so_far = (best_move_root != NO_MOVE) ? best_move_root : NO_MOVE;
 

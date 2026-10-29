@@ -138,7 +138,7 @@ namespace Search {
     using TranspositionTable::TTEntry;
     using HistoryTable = int[2][64][64];
     using CMH = int[2][64][64];
-    TranspositionTable::TT tt(256); // 256 Mb tt
+    TranspositionTable::TT tt;
 
     constexpr int NO_TT_CUTOFF = 1'000'000;
     constexpr int INF = 32'001;
@@ -207,13 +207,13 @@ namespace Search {
 
             if (entry->type() == TranspositionTable::LOWER_BOUND) {
                 if (tt_score > alpha) {
-                    alpha = tt_score;
+                    if(ply > 0)        alpha = tt_score;
                     if (alpha >= beta) return tt_score; // beta cutoff
                 }
             }
             else if (entry->type() == TranspositionTable::UPPER_BOUND) {
                 if (tt_score < beta) {
-                    beta = tt_score;
+                    if(ply > 0)        beta = tt_score;
                     if (alpha >= beta) return tt_score; // alpha cutoff
                 }
             }
@@ -221,25 +221,26 @@ namespace Search {
             return NO_TT_CUTOFF;
         }
 
-        void update_history(const Move& move, Color side, int bonus) {
-            int delta = std::clamp(bonus, -MAX_HISTORY, MAX_HISTORY);
-            int& val = history[static_cast<int>(side) - 1][move.from()][move.to()];
-            val += delta - (val * std::abs(delta)) / HISTORY_GRAVITY;
-            val = std::clamp(val, -MAX_HISTORY, MAX_HISTORY);
+        inline void store_tt(ui64 key, int depth, int ply, int score, int alpha_orig, int beta, Move best_move, int static_eval)const {
+            ui8 type = TranspositionTable::UPPER_BOUND;
+            if (score >= beta)           type = TranspositionTable::LOWER_BOUND;
+            else if (score > alpha_orig) type = TranspositionTable::EXACT;
+
+            tt.store(key, depth, score, best_move, type, ply, current_age, static_eval);
         }
 
-        void update_cmh(Move prev_move, Move move, Color side, int depth) {
-            if (prev_move == NO_MOVE) return;
+        inline void update_history(Move move, Color side, int bonus) {
+            constexpr int MAX = MAX_HISTORY;
+            int delta = std::clamp(bonus, -MAX, MAX);
+            int& val = history[static_cast<int>(side) - 1][move.from()][move.to()];
+            val += delta - val * std::abs(delta) / MAX;
+        }
 
-            int bonus = depth * depth;
-            int prev_sq = prev_move.to();
-            int curr_sq = move.to();
-            int s = static_cast<int>(side) - 1;
-
-            int& val = counter_move_table[s][prev_sq][curr_sq];
-            // Gravity/Aging formula
-            val += bonus - (val * std::abs(bonus)) / HISTORY_GRAVITY;
-            val = std::clamp(val, -MAX_HISTORY, MAX_HISTORY);
+        void update_cmh(Move prev, Move move, Color side, int bonus) {
+            if (prev == NO_MOVE) return;
+            int delta = std::clamp(bonus, -MAX_HISTORY, MAX_HISTORY);
+            int& val = counter_move_table[static_cast<int>(side) - 1][prev.to()][move.to()];
+            val += delta - val * std::abs(delta) / MAX_HISTORY;
         }
 
         //Quiescence Search
@@ -251,14 +252,11 @@ namespace Search {
             Move tt_move = NO_MOVE;
             int tt_value = tt_lookup(pos.get_zobrist_key(), 0, ply, alpha, beta, tt_move);
 
-            if (tt_value != NO_TT_CUTOFF)
-                return tt_value;
+            if (tt_value != NO_TT_CUTOFF)  return tt_value;
 
             int old_alpha = alpha;
             int eval = Eval::evaluate<false>(pos, tt, current_age);
-            if (pos.turn() == Color::BLACK) {
-                eval = -eval;
-            }
+
             // Safety: limit QS depth
             if (ply >= MAX_PLY) return eval;
 
@@ -309,6 +307,7 @@ namespace Search {
 
                 if (time_up) return 0;
                 if (score >= beta) {
+
                     tt.store(pos.get_zobrist_key(), 0, beta, move, TranspositionTable::NodeType::LOWER_BOUND, ply, current_age, eval);
                     return beta;
                 }
@@ -353,17 +352,13 @@ namespace Search {
             if (depth <= 0) return quiescence(pos, alpha, beta, ply);
 
             // Safety cutoff
-            int static_eval = Constants::SCORE_NONE;
-
-            static_eval = Eval::evaluate<false>(pos, tt, current_age);
+            int static_eval = Eval::evaluate<false>(pos, tt, current_age);
             if (ply >= 64) return static_eval;
 
             bool in_check = pos.is_in_check(pos.turn());
 
-            if (ply >= 64) return static_eval;
-
             // 4. Null Move Pruning
-            if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn())) {
+            if (allowed_null && depth >= 3 && !in_check && ply > 0 && pos.has_non_pawn_material(pos.turn()) && static_eval >= beta) {
                 int R = 2 + depth / 3;
                 pos.make_null_move();
                 int score = -negamax(pos, depth - 1 - R, ply + 1, -beta, -beta + 1, false);
@@ -383,6 +378,9 @@ namespace Search {
             int best_score = -INF;
             Move best_move = NO_MOVE;
             int old_alpha = alpha;
+
+            Move quiets_tried[64];
+            int n_quiets{};
 
             // 6. Loop
             while ((move = picker.next_legal(pos)) != NO_MOVE) {
@@ -406,7 +404,7 @@ namespace Search {
                 else {
                     int reduction = 0;
 
-                    if (depth >= 3 && !in_check && legal_moves >= 4) {
+                    if (depth >= 3 && !in_check && legal_moves >= 4 && !move.is_tactical()) {
                         // Base reduction
                         reduction = 1 + (int)(std::log(depth) * std::log(legal_moves) / 2.5);
 
@@ -418,7 +416,7 @@ namespace Search {
                         if (!move.is_capture() && !move.is_promo()) {
                             int hist = history[static_cast<int>(pos.turn()) - 1][move.from()][move.to()];
                             if (hist < 0)         reduction += 1;
-                            else if (hist > 2000) reduction -= 1;
+                            else if (hist > MAX_HISTORY/8) reduction -= 1;
                         }
 
                         // Never reduce too much
@@ -429,7 +427,7 @@ namespace Search {
                     score = -negamax(pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, true);
 
                     // If the move beat alpha, we must re-search with full window
-                    if (score > alpha) {
+                    if (score > alpha && (reduction > 0 || beta - alpha > 1)) {
                         score = -negamax(pos, depth - 1, ply + 1, -beta, -alpha, true);
                     }
                 }
@@ -437,10 +435,23 @@ namespace Search {
                 pos.undo_move();
 
                 if (time_up) return 0;
+                if (!move.is_capture() && n_quiets < 64) quiets_tried[n_quiets++] = move;
 
-                if (score <= alpha && !move.is_capture()) {
-                    if (move != killer[0][ply] && move != killer[1][ply]) {
-                        update_history(move, pos.turn(), -100 * depth);
+                if (best_score >= beta && !best_move.is_capture()) {
+                    Color us = pos.turn();
+                    Move prev = pos.get_last_move();
+                    int bonus = std::min(depth * depth, 1600);
+
+                    update_history(best_move, us, bonus);
+                    update_cmh(prev, best_move, us, bonus);
+                    for (int i = 0; i < n_quiets - 1; ++i) {
+                        update_history(quiets_tried[i], us, -bonus);
+                        update_cmh(prev, quiets_tried[i], us, -bonus);
+                    }
+
+                    if (best_move != killer[0][ply]) {
+                        killer[1][ply] = killer[0][ply];
+                        killer[0][ply] = best_move;
                     }
                 }
 
@@ -467,8 +478,7 @@ namespace Search {
                 NodeType bound = (best_score <= old_alpha) ? NodeType::UPPER_BOUND :
                     (best_score >= beta) ? NodeType::LOWER_BOUND : NodeType::EXACT;
 
-                tt.store(pos.get_zobrist_key(), depth, best_score, best_move, bound, ply, current_age, static_eval);
-
+                store_tt(pos.get_zobrist_key(), depth, ply, best_score, old_alpha, beta, best_move, static_eval);
                 // Update Heuristics on Cutoff
                 if (best_score >= beta && !best_move.is_capture()) {
                     int bonus = depth * depth;
@@ -486,6 +496,7 @@ namespace Search {
                 }
             }
 
+            
             return best_score;
         }
 
@@ -541,6 +552,7 @@ namespace Search {
             max_sel_depth = 0;
             current_age++;
             time_up = false;
+            tt.resize(64);
 
             max_time_ms = max_time_sec * 1000.0;
             search_start = std::chrono::steady_clock::now();
@@ -553,37 +565,36 @@ namespace Search {
             std::string uci_output{};
             std::string pv_string{};
             int alpha = -INF;
-            int beta = +INF;
+            int beta = INF;
             int window = 40;
+            int score;
+            int prev_score;
 
             for (int depth = 1; depth <= target_depth; ++depth)
             {
                 // Early exit before starting expensive iteration
                 if ((time_elapsed_ms(search_start) >= soft_limit_ms) && depth > 1) break;
 
-                int score = negamax(pos, depth, 0, alpha, beta, true);
+                if (depth >= 4) { alpha = prev_score - window; beta = prev_score + window; }
+                
+                score = negamax(pos, depth, 0, alpha, beta, true);
 
-                if (score <= alpha) {
-                    beta = (alpha + beta) / 2;
-                    alpha = std::max(-INF, alpha - window);
+                while (true) {
+                    score = negamax(pos, depth, 0, alpha, beta, true);
+                    if (time_up) break;
+                    if (score <= alpha)      alpha = std::max(-INF, score - window);
+                    else if (score >= beta)  beta  = std::min( INF, score + window);
+                    else break;
                     window *= 2;
                 }
-                else if (score >= beta) {
-                    alpha = (alpha + beta) / 2;
-                    beta = std::min(INF, beta + window);
-                    window *= 2;
-                }
-
-                alpha = score - window;
-                beta = score + window;
 
                 if (time_up) break;
+                prev_score = score;
 
                 // Only accept completed iteration results
                 if (best_move_root != NO_MOVE)
                 {
                     best_so_far = best_move_root;
-                    //best_score_so_far = score;
                 }
 
                 // Calculate stats

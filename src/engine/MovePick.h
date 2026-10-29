@@ -23,7 +23,7 @@ namespace Pick {
         {0,  0,  0,  0,  0,  0,  0}  // Victim King
     };
 
-    int score_move(const Position::Position& pos, Move move, Move tt_move, Move pv_move, 
+    inline int score_move(const Position::Position& pos, Move move, Move tt_move, Move pv_move, 
         const HistoryArr& history, std::array<Move, 2> ply_killers = {})
     {
         if (move == pv_move) {
@@ -103,7 +103,7 @@ namespace Pick {
 
 	private:
 		MoveList& moves;
-		std::array<int, MAX_MOVES> scores{};
+		std::array<int, MAX_MOVES> scores;
 		size_t current_index{};
 	};
 }

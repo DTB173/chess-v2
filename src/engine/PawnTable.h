@@ -1,5 +1,6 @@
+#pragma once
 #include <vector>
-
+#include <span>
 #include "Types.h"
 
 namespace PawnTable {
@@ -7,9 +8,12 @@ namespace PawnTable {
 
     struct alignas(32) PawnEntry {
         ui64 pawn_key;    
+        ui64 passed_pawns;
         i16  score_mg;    
         i16  score_eg;    
-        ui64 passed_pawns;
+        i16  safety_w, safety_b;
+        i16  shelter_w_mg, shelter_w_eg;
+        i16  shelter_b_mg, shelter_b_eg;
     };
 
 
@@ -29,9 +33,9 @@ namespace PawnTable {
             size_mask = p2_size - 1;
         }
 
-        void store(ui64 key, i16 score_mg, i16 score_eg, ui64 passed_pawns) {
+        void store(ui64 key, i16 score_mg, i16 score_eg, ui64 passed_pawns, std::span<i16, 2> safety) {
             size_t index = key & size_mask;
-            table[index] = { key, score_mg, score_eg, passed_pawns };
+            table[index] = { key, passed_pawns, score_eg,score_mg, safety[0], safety[1]};
         }
 
         // Probe (return full entry)
