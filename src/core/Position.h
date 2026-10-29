@@ -172,19 +172,19 @@ namespace Position {
 
         std::array<Piece, 64> mailbox{};
         ui64 zobrist_key{};
-        ui64 pawns_key{};
+        ui64 pawns_king_key{};
 		Score current_score{};
 		int current_phase{};
         Flags metadata{};
         size_t history_idx{};
-        Square king_sq[2];
+        Square king_sq[2]{ Square::SQ_NONE, Square::SQ_NONE };
     public:
 		// prevent accidental copying, allowed to setup for lazy smp
 		//Position(const Position& other) = delete;
 		//Position& operator=(const Position& other) = delete;
 
 		ui64 get_zobrist_key() const { return zobrist_key; }
-        ui64 get_pawn_key() const { return pawns_key; }
+        ui64 get_pawn_key() const { return pawns_king_key; }
         const std::array<Piece, 64>& get_mailbox() const { return mailbox; }
         Flags get_metadata() const { return metadata; }
 		inline Color turn() const { return metadata.side_to_move(); }
@@ -251,7 +251,7 @@ namespace Position {
         bool has_non_pawn_material(Color c) const {
             const int base = (static_cast<int>(c) - 1) * 6;
             return (board[base + 1] | board[base + 2] | board[base + 3] | board[base + 4]) != 0;
-                }
+		}
 
         int evaluate() const {
             int phase = std::clamp(current_phase, 0, 24);
@@ -271,7 +271,7 @@ namespace Position {
             if (!knights)                                   // K vs K, and all bishops on one color
                 return !(bishops & LIGHT_SQUARES) || !(bishops & DARK_SQUARES);
             return !bishops && std::popcount(knights) == 1; // lone knight
-            }
+        }
 
         bool is_draw() const {
             if (metadata.get_clock() >= 100) return true;
@@ -304,7 +304,7 @@ namespace Position {
             current_phase = 0;
 
             zobrist_key = 0;
-            pawns_key = 0;
+            pawns_king_key = 0;
         }
 
         bool set_fen(const std::string& fen, EvalInfo::EvalTrace* et = nullptr) {
@@ -437,7 +437,7 @@ namespace Position {
 
             // Recompute zobrist key
             zobrist_key = compute_hash_from_scratch();
-            pawns_key = compute_pawn_key();
+            pawns_king_key = compute_pawn_key();
             // Recompute evaluation phase and score
             current_phase = 0;
             current_score = Score{ 0, 0 };
@@ -465,7 +465,7 @@ namespace Position {
 
         // NPM helpers
         void make_null_move() {
-            history[history_idx++] = { zobrist_key, pawns_key, Move{}, Piece(), metadata };
+            history[history_idx++] = { zobrist_key, pawns_king_key, Move{}, Piece(), metadata };
             assert(history_idx < history.size());
 
             if (metadata.en_passant_square() != Square::SQ_NONE) {
@@ -480,7 +480,7 @@ namespace Position {
             StateRecord prev = history[--history_idx];
             metadata = prev.prev_flags;
             zobrist_key = prev.prev_zobrist;
-            pawns_key = prev.prev_pawn;
+            pawns_king_key = prev.prev_pawn;
         }
 
         void make_move(Move m) {
@@ -492,7 +492,7 @@ namespace Position {
             Piece captured = mailbox[to];
 
             // 1. History(Must store captured piece for undo)
-            history[history_idx++] = { zobrist_key, pawns_key, m, captured, metadata };
+            history[history_idx++] = { zobrist_key, pawns_king_key, m, captured, metadata };
             assert(history_idx < history.size());
 
             // 2. XOR OUT old metadata before we change it
@@ -526,7 +526,7 @@ namespace Position {
             else if (flags == MoveFlags::DoublePush) {
                 const int ep_sq = (us == Color::WHITE) ? to - 8 : to + 8;
                 if (AttackTables::get_pawn_attacks(ep_sq, us) & get_bitboard(PieceType::PAWN, opponent_of(us)))
-                metadata.set_en_passant_file(Square(from).file());
+                    metadata.set_en_passant_file(Square(from).file());
             }
             else if (flags == MoveFlags::EnPassant) {
                 int victim_sq = (us == Color::WHITE) ? to - 8 : to + 8;
@@ -543,7 +543,7 @@ namespace Position {
             zobrist_key ^= Zobrist::side;
 
             assert(zobrist_key == compute_hash_from_scratch());
-            assert(pawns_key == compute_pawn_key());
+            assert(pawns_king_key == compute_pawn_key());
         }
 
         void undo_move() {
@@ -583,7 +583,7 @@ namespace Position {
             // 4. Restore Metadata
             metadata = prev.prev_flags;
 			zobrist_key = prev.prev_zobrist;
-            pawns_key = prev.prev_pawn;
+            pawns_king_key = prev.prev_pawn;
         }
 
         void inline place_piece(Piece piece, Square sq) {
@@ -596,10 +596,12 @@ namespace Position {
             // XOR IN
             zobrist_key ^= Zobrist::pieces[idx][sq];
 
-            if (piece.type() == PieceType::PAWN) pawns_key^= Zobrist::pieces[idx][sq];
+            if (piece.type() == PieceType::PAWN) pawns_king_key ^= Zobrist::pieces[idx][sq];
 
-            if (piece.type() == PieceType::KING) king_sq[static_cast<int>(piece.color()) - 1] = sq;
-
+            if (piece.type() == PieceType::KING) {
+                king_sq[static_cast<int>(piece.color()) - 1] = sq;
+                pawns_king_key ^= Zobrist::pieces[idx][sq];
+            }
             constexpr int weight[] = { 1, -1 };
 			Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
 			current_score += psq * weight[static_cast<int>(piece.color()) - 1];
@@ -618,7 +620,7 @@ namespace Position {
             // XOR OUT
             zobrist_key ^= Zobrist::pieces[idx][sq];
 
-            if (piece.type() == PieceType::PAWN) pawns_key^= Zobrist::pieces[idx][sq];
+            if (piece.type() == PieceType::PAWN || piece.type() == PieceType::KING) pawns_king_key^= Zobrist::pieces[idx][sq];
 
 			constexpr int weight[] = { 1, -1 };
             Score psq = PSQTables::get_piece_value(piece.type(), piece.color(), sq);
@@ -759,11 +761,6 @@ namespace Position {
             return targets;
         }
 
-        void highlight_attacks(std::ostream& out, Square sq) const {
-            ui64 attacks = get_highlight_bitboard(sq);
-            print_attacks(out, attacks);
-        }
-
         ui64 compute_hash_from_scratch() const {
             ui64 h{};
 
@@ -802,6 +799,9 @@ namespace Position {
                 int sq = Bitwise::pop_lsb(bpawns);
                 k ^= Zobrist::pieces[6][sq];
             }
+
+            k ^= Zobrist::pieces[ 5][king_sq[0]];
+            k ^= Zobrist::pieces[11][king_sq[1]];
             return k;
         }
 
@@ -825,6 +825,7 @@ namespace Position {
             }
             out << "    a   b   c   d   e   f   g   h\n";
         }
+
         void print(std::ostream& out) const {
             out << "\n    a   b   c   d   e   f   g   h\n";
             out << "  +---+---+---+---+---+---+---+---+\n";
