@@ -169,6 +169,46 @@ namespace AttackTables {
 	constexpr inline ui64 get_queen_attacks(int sq, ui64 occupancy) {
 		return get_rook_attacks(sq, occupancy) | get_bishop_attacks(sq, occupancy);
 	}
+
+	template<Color c>
+	ui64 pawn_advance(ui64 pawns, ui64 occupied) {
+		if constexpr (c == Color::WHITE) {
+			return ~occupied & (pawns << 8);
+		}
+		if constexpr (c == Color::BLACK) {
+			return ~occupied & (pawns >> 8);
+		}
+	}
+
+	template<Color c>
+	ui64 pawn_attack_left(ui64 pawns, ui64 targets) {
+		if constexpr (c == Color::WHITE) {
+			return targets & (pawns << 7);
+		}
+		if constexpr (c == Color::BLACK) {
+			return targets & (pawns >> 7);
+		}
+	}
+
+	template<Color c>
+	ui64 pawn_attack_right(ui64 pawns, ui64 targets) {
+		if constexpr (c == Color::WHITE) {
+			return targets & (pawns << 9);
+		}
+		if constexpr (c == Color::BLACK) {
+			return targets & (pawns >> 9);
+		}
+	}
+
+	template<Color c>
+	ui64 pawn_attack_span(ui64 pawns, ui64 targets) {
+		return pawn_attack_left<c>(pawns, targets) | pawn_attack_right<c>(pawns, targets);
+	}
+
+	template<Color c>
+	ui64 pawn_attack_double(ui64 pawns, ui64 targets) {
+		return pawn_attack_left<c>(pawns, targets) & pawn_attack_right<c>(pawns, targets);
+	}
 	
 	consteval std::array<std::array<ui64, 64>, 2> make_pawns_connected_array() {
 		std::array<std::array<ui64, 64>, 2> masks{};
