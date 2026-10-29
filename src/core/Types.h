@@ -50,7 +50,7 @@ namespace Types {
         KING,
     };
 
-    inline Color opponent_of(Color c) {
+    constexpr inline Color opponent_of(Color c) {
         return (c == Color::WHITE) ? Color::BLACK : Color::WHITE;
 	}
 
@@ -98,7 +98,7 @@ namespace Types {
         static constexpr ui16 TO_MASK   = 0xFC0; // (0x3F << 6)
         static constexpr ui16 FLAG_MASK = 0xF000;
 
-        constexpr Move() : data(0) {}
+        constexpr Move() = default;
 
         constexpr Move(int from, int to, int flags = 0) {
             // flags should already be shifted (e.g., MoveFlags::EnPassant)
