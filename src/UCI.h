@@ -13,13 +13,15 @@
 #include "Perft.h"
 #include "Searchv2.h"
 
+#include "engine/Evaluationv2.h"
+
 namespace UCI {
 	using namespace Types;
 
 	constexpr size_t npos = std::numeric_limits<size_t>::max();
 	std::thread search_thread;
 
-	struct EngineOptions { int64_t hash_mb = 64; int threads = 1; };
+	struct EngineOptions { int64_t hash_mb = 256; int threads = 1; };
 
 	struct GoParams {
 		int64_t wtime = -1, btime = -1, winc = 0, binc = 0;
@@ -51,7 +53,7 @@ namespace UCI {
 		}
 	}
 
-	constexpr const std::string_view startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 	enum class OpType {
 		ID,
@@ -129,7 +131,7 @@ namespace UCI {
 
 	void handle_position(const std::string& input, Position::Position& pos) {
 		if (input.find("startpos") != std::string::npos) {
-			pos.set_fen(startpos.data());
+			pos.set_fen(startpos);
 		}
 		else if (auto fen_pos = input.find("fen "); fen_pos != std::string::npos) {
 			// Find where moves start to isolate FEN
@@ -219,8 +221,6 @@ namespace UCI {
 				Search::Searcher::stop_signal = false;
 
 				int64_t depth = params.depth;
-
-				if(limits.hard_ms != npos) std::cout << "[info] string allocated " << limits.hard_ms << "ms\n" << std::flush;
 
 				search_thread = std::thread([&searcher, &pos, depth, limits]() {
 					Types::Move best_move = searcher.start_search(pos, depth, limits);

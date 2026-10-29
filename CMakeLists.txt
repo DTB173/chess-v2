@@ -23,7 +23,7 @@ if(MSVC)
     string(APPEND CMAKE_CXX_FLAGS_RELEASE " /O2 /Oi /Ot /GL /arch:AVX2 /DNDEBUG /Zi")
     string(APPEND CMAKE_EXE_LINKER_FLAGS_RELEASE " /LTCG /OPT:REF /OPT:ICF /DEBUG")
 else()
-    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O3 -march=native -flto -DNDEBUG -fno-stack-protector -funroll-loops")
+    string(APPEND CMAKE_CXX_FLAGS_RELEASE " -O3 -march=native -flto -DNDEBUG")
     string(APPEND CMAKE_EXE_LINKER_FLAGS_RELEASE " -O3 -flto")
 endif()
 

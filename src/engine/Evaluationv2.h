@@ -16,6 +16,83 @@ namespace Eval {
 	using namespace AttackTables;
 	using namespace TranspositionTable;
 
+    PawnTable::PawnTable pawns_cache(16);
+
+    struct EvalCache {
+        ui64 pawn_attack[2];
+        ui64 pawn_attacks_by_2[2];
+        ui64 rammed_pawns[2];
+        ui64 blocked_pawns[2];
+        ui64 passed_pawns;
+        ui64 king_areas[2];
+        ui64 mobility_areas[2];
+        ui64 attacked[2];
+        ui64 attacked_by_2[2];
+        ui64 attacked_by[2][6];
+
+        Square king_sq[2];
+        int king_attacks_count[2];
+        int king_attackers_count[2];
+        int king_attackers_weight[2];
+
+        Score pk_eval[2];
+        int pk_safety[2];
+        PawnTable::PawnEntry* pkentry = nullptr;
+
+        void init(Position::Position& pos) {
+            ui64 white = pos.get_occupancy(Color::WHITE);
+            ui64 black = pos.get_occupancy(Color::BLACK);
+
+            ui64 wpawns = pos.get_bitboard(PieceType::PAWN, Color::WHITE);
+            ui64 bpawns = pos.get_bitboard(PieceType::PAWN, Color::BLACK);
+
+            ui64 wbishops = pos.get_bitboard(PieceType::BISHOP, Color::WHITE) | pos.get_bitboard(PieceType::QUEEN, Color::WHITE);
+            ui64 bbishops = pos.get_bitboard(PieceType::BISHOP, Color::BLACK) | pos.get_bitboard(PieceType::QUEEN, Color::BLACK);
+
+            ui64 wrooks = pos.get_bitboard(PieceType::ROOK, Color::WHITE) | pos.get_bitboard(PieceType::QUEEN, Color::WHITE);
+            ui64 brooks = pos.get_bitboard(PieceType::ROOK, Color::BLACK) | pos.get_bitboard(PieceType::QUEEN, Color::BLACK);
+
+            ui64 wking = pos.get_bitboard(PieceType::KING, Color::WHITE);
+            ui64 bking = pos.get_bitboard(PieceType::KING, Color::BLACK);
+
+            pawn_attack[0] = pawn_attack_span<Color::WHITE>(wpawns, ~0ULL);
+            pawn_attack[1] = pawn_attack_span<Color::BLACK>(bpawns, ~0ULL);
+
+            pawn_attacks_by_2[0] = pawn_attack_double<Color::WHITE>(wpawns, ~0ull);
+            pawn_attacks_by_2[1] = pawn_attack_double<Color::BLACK>(bpawns, ~0ull);
+
+            rammed_pawns[0] = pawn_advance<Color::BLACK>(bpawns, ~(wpawns));
+            rammed_pawns[1] = pawn_advance<Color::WHITE>(wpawns, ~(bpawns));
+
+            blocked_pawns[0] = pawn_advance<Color::BLACK>(white | black, ~(wpawns));
+            blocked_pawns[1] = pawn_advance<Color::WHITE>(white | black, ~(bpawns));
+
+            king_sq[0] = Bitwise::lsb(wking);
+            king_sq[1] = Bitwise::lsb(bking);
+            king_areas[0] = Bitboards::king_area(king_sq[0]);
+            king_areas[1] = Bitboards::king_area(king_sq[1]);
+
+            mobility_areas[0] = ~(pawn_attack[1] | wking | blocked_pawns[0]);
+            mobility_areas[1] = ~(pawn_attack[0] | bking | blocked_pawns[1]);
+
+            attacked[0] = attacked_by[0][5] = AttackTables::get_king_attacks(king_sq[0]);
+            attacked[1] = attacked_by[1][5] = AttackTables::get_king_attacks(king_sq[1]);
+
+            king_attacks_count[0] = king_attacks_count[1] = {};
+            king_attackers_count[0] = king_attackers_count[1] = {};
+            king_attackers_weight[0] = king_attackers_weight[1] = {};
+
+            pkentry = pawns_cache.probe(pos.get_pawn_key());
+
+            passed_pawns = pkentry ? pkentry->passed_pawns : 0ULL;
+            pk_eval[0] = pkentry ? Score{ pkentry->score_mg + pkentry->score_eg } : Score{};
+            pk_eval[1] = {};
+            pk_safety[0] = pkentry ? pkentry->safety_w : 0;
+            pk_safety[1] = pkentry ? pkentry->safety_b : 0;
+        }
+    };
+
+
     constexpr inline Score pawn_passed_candidate[2][8] = {
     { {   0,    0}, { -10,  -20}, { -15,   20}, { -15,   30}, { -20,   60}, {  20,   60}, {   0,    0}, {   0,    0} },
     { {   0,    0}, { -10,   20}, {  -5,   25}, {   0,   50}, {  20,  110}, {  50,   70}, {   0,    0}, {   0,    0} }
@@ -170,11 +247,12 @@ namespace Eval {
 
     constexpr inline Score tempo = { 15, 15 };
 
-    PawnTable::PawnTable pawns_cache(16);
+    
 
     using M = EvalInfo::Mapper;
+    using Pos = Position::Position;
 
-    ui64 discovered_attacks(const Position::Position& pos, Square sq, Color us) {
+    ui64 discovered_attacks(const Pos& pos, Square sq, Color us) {
         Color them = opponent_of(us);
 
         ui64 occupied = pos.get_total_occupancy();
@@ -189,10 +267,10 @@ namespace Eval {
             | (enemy_bishops & get_bishop_attacks(sq, occupied & ~bishop_attacks));
     }
 
-    template<bool Trace>
-    Score evaluate_pawns(const Position::Position& pos, Color us, ui64& passed_pawns, EvalInfo::EvalTrace* et = nullptr) {
-        Color them = opponent_of(us);
-        int forward = (us == Color::WHITE) ? 8 : -8;
+    template<bool Trace, Color us>
+    Score evaluate_pawns(const Pos& pos, ui64& passed_pawns, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
+        constexpr Color them = opponent_of(us);
+        constexpr int forward = (us == Color::WHITE) ? 8 : -8;
 
         Score score = Score(0, 0);
         ui64 my_pawns    = pos.get_bitboard(PieceType::PAWN, us);
@@ -271,8 +349,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    Score evaluate_pawn_structure(const Position::Position& pos, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace>
+    Score evaluate_pawn_structure(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         if constexpr (!Trace) {
             if (auto* pentry = pawns_cache.probe(pos.get_pawn_key()); pentry) {
                 return { pentry->score_mg, pentry->score_eg };
@@ -280,16 +358,18 @@ namespace Eval {
         }
 
         ui64 passed_pawns{};
-        Score white_score = evaluate_pawns<Trace>(pos, Color::WHITE, passed_pawns, et);
-        Score black_score = evaluate_pawns<Trace>(pos, Color::BLACK, passed_pawns, et);
+        Score white_score = evaluate_pawns<Trace, Color::WHITE>(pos, passed_pawns, ec, et);
+        Score black_score = evaluate_pawns<Trace, Color::BLACK>(pos, passed_pawns, ec, et);
 
         Score s = white_score - black_score;
-        pawns_cache.store(pos.get_pawn_key(), s.mg, s.eg, passed_pawns);
+
+        i16 safety[2] = {};
+        pawns_cache.store(pos.get_pawn_key(), s.mg, s.eg, passed_pawns, safety);
         return s;
     }
 
-    template <bool Trace>
-    Score evaluate_knights(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    Score evaluate_knights(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Color them = opponent_of(us);
         ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
         ui64 my_pawns = pos.get_bitboard(PieceType::PAWN, us);
@@ -351,8 +431,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    Score evaluate_bishops(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    Score evaluate_bishops(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Color them = opponent_of(us);
 
         ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
@@ -420,8 +500,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    Score evaluate_rooks(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    Score evaluate_rooks(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Color them = opponent_of(us);
 
         ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
@@ -468,8 +548,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    Score evaluate_queens(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    Score evaluate_queens(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         ui64 my_queens = pos.get_bitboard(PieceType::QUEEN, us);
         ui64 occupancy = pos.get_total_occupancy();
         int sign = us == Color::WHITE ? 1 : -1;
@@ -497,8 +577,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    Score evaluate_king_shelter(const Position::Position& pos, Color us, int shelter_sign, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    Score evaluate_king_shelter(const Pos& pos, int shelter_sign, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Square ksq = pos.get_king_square(us);
         Color them = opponent_of(us);
         int king_file = Bitboards::file_of(ksq);
@@ -539,8 +619,8 @@ namespace Eval {
         return score;
     }
 
-    template <bool Trace>
-    int evaluate_king_attack(const Position::Position& pos, Color us, int sign, EvalInfo::EvalTrace* et = nullptr) {
+    template<bool Trace, Color us>
+    int evaluate_king_attack(const Pos& pos, int sign, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Color them = opponent_of(us);
         Square ksq = pos.get_king_square(us);
         ui64 zone = Bitboards::king_area(ksq);
@@ -598,20 +678,22 @@ namespace Eval {
         return final_score;
     }
 
-    template <bool Trace>
-    Score evaluate_kings(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
-        int base_sign = (us == Color::WHITE) ? 1 : -1;
+    template<bool Trace, Color us>
+    Score evaluate_kings(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
+        constexpr int base_sign = (us == Color::WHITE) ? 1 : -1;
         int shelter_sign = base_sign * 2;
 
-        Score shelter = evaluate_king_shelter<Trace>(pos, us, shelter_sign, et);
-        int attack = evaluate_king_attack<Trace>(pos, us, base_sign, et);
+        Score shelter = evaluate_king_shelter<Trace, us>(pos, shelter_sign, ec, et);
+        int attack = evaluate_king_attack<Trace, us>(pos, base_sign, ec, et);
 
         return shelter * 2 + Score(attack, attack / 3);
     }
 
-    template <bool Trace>
-    Score evaluate_passed(const Position::Position& pos, Color us, EvalInfo::EvalTrace* et = nullptr) {
-        Color them = opponent_of(us);
+    template <bool Trace, Color us>
+    Score evaluate_passed(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
+        constexpr Color them = opponent_of(us);
+        constexpr int sign = us == Color::WHITE ? 1 : -1;
+        constexpr int forward = (us == Color::WHITE) ? 8 : -8;
 
         auto* pentry = pawns_cache.probe(pos.get_pawn_key());
         if (!pentry) return {};
@@ -621,13 +703,12 @@ namespace Eval {
         ui64 occupied = pos.get_total_occupancy();
         ui64 enemy_pawns = pos.get_bitboard(PieceType::PAWN, them);
 
-        int sign = us == Color::WHITE ? 1 : -1;
         Score score{};
         while (temp_passed) {
             Square sq = Bitwise::pop_lsb(temp_passed);
             int rank = Bitboards::relative_rank_of(sq, us);
 
-            Square next_sq = (us == Color::WHITE) ? sq + 8 : sq - 8;
+            Square next_sq = sq + forward;
             bool can_advance = !(occupied & (1ULL << next_sq));
             bool safe_advance = can_advance && !(AttackTables::get_pawn_attacks(next_sq, us) & enemy_pawns);
 
@@ -663,21 +744,24 @@ namespace Eval {
     }
 
     template <bool Trace>
-    Score evaluate_pieces(const Position::Position& pos, EvalInfo::EvalTrace* et = nullptr) {
+    Score evaluate_pieces(const Pos& pos, EvalCache& ec, EvalInfo::EvalTrace* et = nullptr) {
         Score s{};
-        s += evaluate_pawn_structure<Trace>(pos, et);
-        s += evaluate_knights<Trace>(pos, Color::WHITE, et) - evaluate_knights<Trace>(pos, Color::BLACK, et);
-        s += evaluate_bishops<Trace>(pos, Color::WHITE, et) - evaluate_bishops<Trace>(pos, Color::BLACK, et);
-        s += evaluate_rooks  <Trace>(pos, Color::WHITE, et) - evaluate_rooks  <Trace>(pos, Color::BLACK, et);
-        s += evaluate_queens <Trace>(pos, Color::WHITE, et) - evaluate_queens <Trace>(pos, Color::BLACK, et);
-        s += evaluate_kings  <Trace>(pos, Color::WHITE, et) - evaluate_kings  <Trace>(pos, Color::BLACK, et);
-        s += evaluate_passed <Trace>(pos, Color::WHITE, et) - evaluate_passed <Trace>(pos, Color::BLACK, et);
+        s += evaluate_pawn_structure<Trace>(pos, ec, et);
+        s += evaluate_knights<Trace, Color::WHITE>(pos, ec, et) - evaluate_knights<Trace, Color::BLACK>(pos, ec, et);
+        s += evaluate_bishops<Trace, Color::WHITE>(pos, ec, et) - evaluate_bishops<Trace, Color::BLACK>(pos, ec, et);
+        s += evaluate_rooks  <Trace, Color::WHITE>(pos, ec, et) - evaluate_rooks  <Trace, Color::BLACK>(pos, ec, et);
+        s += evaluate_queens <Trace, Color::WHITE>(pos, ec, et) - evaluate_queens <Trace, Color::BLACK>(pos, ec, et);
+        s += evaluate_kings  <Trace, Color::WHITE>(pos, ec, et) - evaluate_kings  <Trace, Color::BLACK>(pos, ec, et);
+        s += evaluate_passed <Trace, Color::WHITE>(pos, ec, et) - evaluate_passed <Trace, Color::BLACK>(pos, ec, et);
 
         return s;
     }
 
     template <bool Trace>
-	int evaluate(const Position::Position& pos, TT& tt, ui8 current_age, EvalInfo::EvalTrace* et = nullptr) {
+	int evaluate(const Pos& pos, TT& tt, ui8 current_age, EvalInfo::EvalTrace* et = nullptr) {
+        EvalCache ec{};
+
+        const int sign = (pos.turn() == Color::WHITE) ? 1 : -1;
         if constexpr (!Trace) {
             ui64 key = pos.get_zobrist_key();
             auto* entry = tt.probe(key);
@@ -688,13 +772,12 @@ namespace Eval {
 
         int phase = pos.get_phase();
         int psqt_score = pos.evaluate();
-        Score total_score = evaluate_pieces<Trace>(pos, et);
+        Score total_score = evaluate_pieces<Trace>(pos, ec, et);
  
-        int final_eval = total_score.eval(phase) + psqt_score;
+        int final_eval = total_score.eval(phase) + psqt_score * sign;
 
         if constexpr (!Trace) tt.store_eval(pos.get_zobrist_key(), static_cast<i16>(final_eval), current_age);
-        if constexpr (Trace) return final_eval * (pos.turn() == Color::WHITE) ? 1 : -1;
 
-        return final_eval * ((pos.turn() == Color::WHITE) ? 1 : -1);
+        return final_eval;
 	}
 }
