@@ -80,8 +80,12 @@ namespace Bitboards {
 
 	constexpr ui64 LONG_DIAGONALS = 0x8142241818244281ull;
 	constexpr ui64 CENTER_SQUARES = 0x0000001818000000ull;
+	constexpr ui64 WHITE_SQUARES = 0x55AA55AA55AA55AAULL;
+	constexpr ui64 BLACK_SQUARES = 0xAA55AA55AA55AA55ULL;
 
-
+	constexpr inline ui64 squares_matching_color(Square sq) {
+		return Bitwise::test_bit(WHITE_SQUARES, sq) ? WHITE_SQUARES : BLACK_SQUARES;
+	}
 
 	constexpr inline ui64 rank_mask(int rank) {
 		return RANK_MASKS[rank];
@@ -138,6 +142,28 @@ namespace Bitboards {
 
 	constexpr inline bool several(ui64 b) {
 		return b & (b - 1);
+	}
+
+	consteval std::array<std::array<int, 256>, 8> init_king_pawn_dist() {
+		std::array<std::array<int, 256>, 8> masks{};
+
+		for (uint64_t mask = 0ull; mask <= 0xFF; mask++) {
+			for (int file = 0; file < 8; file++) {
+
+				int ldist, rdist, dist;
+				uint64_t left, right;
+
+				left = (0xFFull & (mask << (8 - file - 1))) >> (8 - file - 1);
+				right = (mask >> file) << file;
+
+				ldist = left ? file - Bitwise::msb(left) : 8 - 1;
+				rdist = right ? Bitwise::lsb(right) - file : 8 - 1;
+
+				dist = (left | right) ? std::min(ldist, rdist) : 0;
+				masks[file][mask] = dist;
+			}
+		}
+		return masks;
 	}
 
 	consteval std::array<ui64, 8> init_rank_below() {
@@ -237,6 +263,7 @@ namespace Bitboards {
 	constexpr inline auto RANKS_ABOVE = init_rank_above();
 
 	constexpr inline auto FORWARD_FILE_MASK = init_forward_file_masks();
+	constexpr inline auto KING_PAWN_FILE_DISTANCE = init_king_pawn_dist();
 
 	consteval std::array<ui64, 64> init_king_zone() {
 		std::array<ui64, 64> zones{};
@@ -287,4 +314,10 @@ namespace Bitboards {
 	ui64 get_passed_mask(Square sq, Color side) {
 		return PASSED_MASK[static_cast<int>(side)-1][sq];
 	}
+
+	constexpr inline int king_pawn_file_distance(ui64 pawns, int ksq) {
+		pawns |= pawns >> 8; pawns |= pawns >> 16; pawns |= pawns >> 32;
+		return KING_PAWN_FILE_DISTANCE[file_of(ksq)][pawns & 0xFF];
+	}
+
 }

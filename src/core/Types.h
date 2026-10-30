@@ -60,11 +60,14 @@ namespace Types {
 
         constexpr void operator+=(const Score& other) { mg += other.mg; eg += other.eg; }
         constexpr void operator-=(const Score& other) { mg -= other.mg; eg -= other.eg; }
-        constexpr Score operator*(int factor) { return { mg * factor, eg * factor }; }
+
+        constexpr Score operator*(int factor) const { return { mg * factor, eg * factor }; }
+        constexpr Score operator-(const Score& other) const { return Score{ mg - other.mg, eg - other.eg }; }
+
         friend constexpr Score operator+(int scalar, const Score& s) { return { s.mg + scalar, s.eg + scalar }; }
         friend constexpr Score operator*(int factor, const Score& s) { return { s.mg * factor, s.eg * factor }; }
         friend constexpr Score operator+(const Score& s1, const Score& s2) { return { s1.mg + s2.mg, s1.eg + s2.eg }; }
-        constexpr Score operator-(const Score& other) { return Score{ mg - other.mg, eg - other.eg }; }
+        
         inline int eval(int phase) const {
             return (mg * phase + eg * (24 - phase)) / 24;
         }

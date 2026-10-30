@@ -214,7 +214,7 @@ namespace Position {
             if (m.flags() == MoveFlags::EnPassant) captured = 1ULL << ((us == Color::WHITE) ? to - 8 : to + 8);
             else if (!mailbox[to].is_none())       captured = 1ULL << to;
 
-            // Occupancy after the move (rook hop on castling is ignored, see note)
+            // Occupancy after the move
             ui64 occ = (total_pieces ^ (1ULL << from)) & ~captured;
             occ |= 1ULL << to;
 
@@ -227,8 +227,8 @@ namespace Position {
             const ui64 bishops = (get_bitboard(PieceType::BISHOP, them) | get_bitboard(PieceType::QUEEN, them)) & alive;
             const ui64 rooks = (get_bitboard(PieceType::ROOK, them) | get_bitboard(PieceType::QUEEN, them)) & alive;
 
-            if (AttackTables::get_pawn_attacks(ksq, us) & pawns)     return false;
-            if (AttackTables::get_knight_attacks(ksq) & knights)     return false;
+            if (AttackTables::get_pawn_attacks(ksq, us) & pawns)      return false;
+            if (AttackTables::get_knight_attacks(ksq) & knights)      return false;
             if (AttackTables::get_bishop_attacks(ksq, occ) & bishops) return false;
             if (AttackTables::get_rook_attacks(ksq, occ) & rooks)     return false;
             if (king_moves && (AttackTables::get_king_attacks(ksq) & get_bitboard(PieceType::KING, them))) return false;

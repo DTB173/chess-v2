@@ -48,6 +48,7 @@ namespace Search {
 		void clear();
 		static inline std::atomic <bool> stop_signal{};
 		static inline TranspositionTable::TT tt;
+		ui64 nodes_visited{};
 	private:
 		int negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null);
 		int quiescence(Position::Position& pos, int alpha, int beta, int ply);
@@ -82,12 +83,10 @@ namespace Search {
 			std::array<int, Search_Constants::MAX_PLY> length;
 		}pv;
 
-
 		std::chrono::steady_clock::time_point search_start{};
 		double max_time_ms{};
 		bool time_up{};
 
-		ui64 nodes_visited{};
 		int max_sel_depth{};
 		Move best_move_root{};
 		ui8 current_age{};
@@ -249,7 +248,7 @@ namespace Search {
 	inline int Searcher::negamax(Position::Position& pos, int depth, int ply, int alpha, int beta, bool allowed_null) {
 		// 1. ========= Terminal checks =============
 		// if its draw or we run out of time, we stop searching
-		if (ply > 0 && pos.is_draw() || check_time<false>()) return 0;
+		if ((ply > 0 && pos.is_draw()) || check_time<false>()) return 0;
 
 		// 2. ============== TT Lookup ==============
 
@@ -368,7 +367,7 @@ namespace Search {
 			int bonus = std::min(depth * depth, 1600);
 			update_history(best_move, pos.turn(), bonus);
 
-			for (int i = 0; i < quiets_tried.size() - 1; i++) {
+			for (size_t i = 0; i < quiets_tried.size() - 1; i++) {
 				update_history(quiets_tried[i], pos.turn(), -bonus);
 			}
 
@@ -403,7 +402,7 @@ namespace Search {
 		Pick::Picker initial_picker(pos, moves, NO_MOVE, NO_MOVE, history);
 		best_move_root = initial_picker.next_legal(pos);
 
-		for (int depth = 1; depth <= target_depth; ++depth) {
+		for (int depth = 1; depth <= static_cast<int>(target_depth); ++depth) {
 
 			// Early exit before starting expensive iteration
 			if ((time_elapsed_ms(search_start) >= limits.soft_ms) && depth > 1) break;

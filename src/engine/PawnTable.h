@@ -3,23 +3,29 @@
 #include <span>
 #include "Types.h"
 
+#ifndef CACHE_STATS
+#define CACHE_STATS
+#endif
+
 namespace PawnTable {
     using namespace Types;
 
+    struct SafetyScore {
+        i16 mg, eg;
+    };
     struct alignas(32) PawnEntry {
         ui64 pawn_key;    
         ui64 passed_pawns;
         i16  score_mg;    
         i16  score_eg;    
-        i16  safety_w, safety_b;
-        i16  shelter_w_mg, shelter_w_eg;
-        i16  shelter_b_mg, shelter_b_eg;
+        SafetyScore safety_w, safety_b;
     };
 
 
     class PawnTable {
         std::vector<PawnEntry> table;
         size_t size_mask;
+        ui64 probes = 0, hits = 0;
     public:
         PawnTable(size_t sz_in_mb) {
             size_t entry_size = sizeof(PawnEntry);
@@ -33,23 +39,42 @@ namespace PawnTable {
             size_mask = p2_size - 1;
         }
 
-        void store(ui64 key, i16 score_mg, i16 score_eg, ui64 passed_pawns, std::span<i16, 2> safety) {
+        void store(ui64 key, i16 score_mg, i16 score_eg, ui64 passed_pawns, Score safety[2]) {
             size_t index = key & size_mask;
-            table[index] = { key, passed_pawns, score_eg,score_mg, safety[0], safety[1]};
+            SafetyScore w, b;
+            w = SafetyScore(safety[0].mg, safety[0].eg);
+            b = SafetyScore(safety[1].mg, safety[1].eg);
+            table[index] = { key, passed_pawns, score_eg,score_mg, w, b};
         }
 
         // Probe (return full entry)
         PawnEntry* probe(ui64 key) {
+#ifdef CACHE_STATS
+            ++probes;
+#endif
             size_t index = key & size_mask;
             PawnEntry& e = table[index];
             if (e.pawn_key == key) {
+#ifdef CACHE_STATS
+                ++hits;
+#endif
                 return &e;
             }
             return nullptr;
         }
+
+        void print_stats() const {
+            std::printf("pawn cache: %llu probes, %llu hits (%.1f%%)\n",
+                (unsigned long long)probes, (unsigned long long)hits,
+                probes ? 100.0 * hits / probes : 0.0);
+        }
+
+        void reset_stats() { probes = hits = 0; }
 
         void clear() {
             std::fill(table.begin(), table.end(), PawnEntry{});
         }
     };
 }
+
+#undef CACHE_STATS

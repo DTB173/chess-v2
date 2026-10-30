@@ -4,6 +4,10 @@
 
 #include "Types.h"
 
+#ifndef CACHE_STATS
+#define CACHE_STATS
+#endif
+
 namespace Constants {
     constexpr int MATE_SCORE = 32000;
     constexpr int INFINITE_SCORE = 32001;
@@ -55,6 +59,7 @@ namespace TranspositionTable {
     private:
         std::vector<Cluster> table;
         size_t size_mask;
+        ui64 probes = 0, hits = 0;
     public:
         void resize(size_t sz_in_mb) {
             size_t cluster_size = sizeof(Cluster);
@@ -154,10 +159,16 @@ namespace TranspositionTable {
         }
 
         TTEntry* probe(ui64 key) {
+#ifdef CACHE_STATS
+            ++probes;
+#endif
             Cluster& cluster = table[key & size_mask];
 
             for (int i = 0; i < 4; ++i) {
                 if (cluster.data[i].key_ == key) {
+#ifdef CACHE_STATS
+                    ++hits;
+#endif
                     return &cluster.data[i];
                 }
             }
@@ -179,5 +190,14 @@ namespace TranspositionTable {
         void clear() {
             std::fill(table.begin(), table.end(), Cluster{});
         }
+
+        void print_stats() const {
+            std::printf("tt: %llu probes, %llu hits (%.1f%%)\n",
+                (unsigned long long)probes, (unsigned long long)hits,
+                probes ? 100.0 * hits / probes : 0.0);
+        }
+        void reset_stats() { probes = hits = 0; }
     };
 }
+
+#undef CACHE_STATS
